@@ -1,7 +1,7 @@
 # Motherless Downloader
 
 A modern download manager for Motherless media files with two interface options:
-- **Web Interface** (v0.2.1): FastAPI + React with real-time WebSocket updates, multi-download queue
+- **Web Interface** (v0.2.2): FastAPI + React with real-time WebSocket updates, multi-download queue
 - **Desktop GUI** (Legacy): PySide6-based traditional desktop application
 
 Both interfaces share the same robust download engine with multi-connection support, pause/resume, and adaptive connection management.
@@ -17,10 +17,13 @@ Both interfaces share the same robust download engine with multi-connection supp
 - **Media Discovery**: Auto-discovers direct media URLs from page URLs
 - **Cross-Platform**: Windows, Linux, macOS support
 
-### Web Interface (v0.2.1)
+### Web Interface (v0.2.2)
 - **Modern React UI**: Beautiful glassmorphism design with dark theme
-- **Download Queue**: Manage multiple downloads simultaneously
-- **Real-Time Updates**: WebSocket-based live progress tracking
+- **Download Queue**: Manage multiple downloads simultaneously with configurable concurrency
+- **Real-Time Updates**: WebSocket-based live progress tracking with optimized throttling
+- **Statistics Dashboard**: Live overview of total, active, completed, and failed downloads
+- **Smart Cleanup**: Auto-cleanup of old downloads with manual "Clear Completed" button
+- **URL Validation**: Instant feedback on invalid URLs before download starts
 - **REST API**: Full programmatic control via REST endpoints
 - **Responsive Design**: Works on desktop, tablet, and mobile
 - **Status Indicators**: Visual feedback for queued, downloading, paused, completed states
@@ -162,11 +165,14 @@ When running the web interface, full API documentation is available at:
 
 ### Key Endpoints
 - `GET /api/downloads` - List all downloads
-- `POST /api/downloads` - Add new download
+- `POST /api/downloads` - Add new download (with URL validation)
+- `POST /api/downloads/cleanup` - Clean up old completed/failed/cancelled downloads
 - `POST /api/downloads/{id}/pause` - Pause download
 - `POST /api/downloads/{id}/resume` - Resume download
 - `POST /api/downloads/{id}/cancel` - Cancel download
 - `DELETE /api/downloads/{id}` - Remove from queue
+- `GET /api/settings` - Get current settings
+- `PATCH /api/settings` - Update settings
 - `WS /ws` - WebSocket for real-time updates
 
 ## Configuration
