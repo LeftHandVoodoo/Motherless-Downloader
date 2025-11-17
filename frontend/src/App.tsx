@@ -208,6 +208,17 @@ function App() {
     }
   };
 
+  const handleClearCompleted = async () => {
+    try {
+      const response = await downloadsApi.cleanup();
+      console.log(`Cleared ${response.data.removed} completed downloads`);
+      // Refresh download list
+      fetchDownloads();
+    } catch (error) {
+      console.error('Failed to clear completed downloads:', error);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-gray-900 to-zinc-950">
       {/* Banner Header */}
@@ -323,12 +334,74 @@ function App() {
           </CardContent>
         </Card>
 
+        {/* Statistics Panel */}
+        {downloads.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Card className="bg-zinc-900/90 backdrop-blur-sm border-zinc-700">
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-gray-100">
+                    {downloads.length}
+                  </div>
+                  <div className="text-sm text-gray-400 mt-1">Total Downloads</div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-zinc-900/90 backdrop-blur-sm border-zinc-700">
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-blue-400">
+                    {downloads.filter(d => d.status === DownloadStatus.DOWNLOADING).length}
+                  </div>
+                  <div className="text-sm text-gray-400 mt-1">Active</div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-zinc-900/90 backdrop-blur-sm border-zinc-700">
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-green-400">
+                    {downloads.filter(d => d.status === DownloadStatus.COMPLETED).length}
+                  </div>
+                  <div className="text-sm text-gray-400 mt-1">Completed</div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-zinc-900/90 backdrop-blur-sm border-zinc-700">
+              <CardContent className="pt-6">
+                <div className="text-center">
+                  <div className="text-3xl font-bold text-red-400">
+                    {downloads.filter(d => d.status === DownloadStatus.FAILED).length}
+                  </div>
+                  <div className="text-sm text-gray-400 mt-1">Failed</div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
         {/* Downloads Queue */}
         <Card className="bg-zinc-900/90 backdrop-blur-sm border-zinc-700">
           <CardHeader>
-            <CardTitle className="text-gray-100">
-              Download Queue ({downloads.length})
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-gray-100">
+                Download Queue ({downloads.length})
+              </CardTitle>
+              {downloads.some(d => d.status === DownloadStatus.COMPLETED || d.status === DownloadStatus.FAILED || d.status === DownloadStatus.CANCELLED) && (
+                <Button
+                  onClick={handleClearCompleted}
+                  variant="outline"
+                  size="sm"
+                  className="bg-zinc-800 hover:bg-zinc-700 border-zinc-600 text-gray-300"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Clear Completed
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-3">
             {downloads.length === 0 ? (
@@ -352,7 +425,7 @@ function App() {
 
         {/* Footer */}
         <div className="text-center text-gray-500 text-sm pb-6">
-          <p>Version 0.2.1 • Modern FastAPI + React Interface</p>
+          <p>Version 0.2.2 • Modern FastAPI + React Interface</p>
         </div>
       </div>
     </div>

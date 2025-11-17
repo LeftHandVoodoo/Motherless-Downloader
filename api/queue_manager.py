@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +12,8 @@ from platformdirs import user_downloads_dir
 
 from downloader.manager import DownloadManager, DownloadRequest as DLRequest
 from .models import DownloadStatus, DownloadInfo
+
+logger = logging.getLogger(__name__)
 
 
 class DownloadTask:
@@ -40,6 +44,7 @@ class DownloadTask:
 
         self.manager: Optional[DownloadManager] = None
         self.dest_path: Optional[Path] = None
+        self.last_progress_update = 0.0  # Timestamp for throttling
 
     def to_info(self) -> DownloadInfo:
         """Convert to DownloadInfo model."""
@@ -63,21 +68,40 @@ class DownloadTask:
 class QueueManager:
     """Manages a queue of downloads with concurrency control."""
 
-    def __init__(self, max_concurrent: int = 3):
+    def __init__(self, max_concurrent: int = 3, auto_cleanup_hours: int = 24, max_completed: int = 100):
         self.max_concurrent = max_concurrent
+        self.auto_cleanup_hours = auto_cleanup_hours
+        self.max_completed = max_completed
         self.tasks: Dict[str, DownloadTask] = {}
         self.active_downloads: set[str] = set()
-        self.progress_callbacks: list[Callable] = []
+        self.progress_callbacks: Dict[int, Callable] = {}  # Use dict with callback ID
+        self._callback_counter = 0
         self._queue_lock = asyncio.Lock()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        
+        self.PROGRESS_THROTTLE_INTERVAL = 0.5  # seconds between updates
+        self._cleanup_task: Optional[asyncio.Task] = None
+
     def set_event_loop(self, loop: asyncio.AbstractEventLoop):
         """Set the asyncio event loop for thread-safe task scheduling."""
         self._loop = loop
+        # Start periodic cleanup task
+        if not self._cleanup_task or self._cleanup_task.done():
+            self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
+            logger.info("Started periodic cleanup task")
 
-    def register_progress_callback(self, callback: Callable):
-        """Register a callback for progress updates."""
-        self.progress_callbacks.append(callback)
+    def register_progress_callback(self, callback: Callable) -> int:
+        """Register a callback for progress updates. Returns callback ID."""
+        self._callback_counter += 1
+        callback_id = self._callback_counter
+        self.progress_callbacks[callback_id] = callback
+        logger.info(f"Registered progress callback {callback_id}")
+        return callback_id
+
+    def unregister_progress_callback(self, callback_id: int):
+        """Unregister a progress callback by ID."""
+        if callback_id in self.progress_callbacks:
+            del self.progress_callbacks[callback_id]
+            logger.info(f"Unregistered progress callback {callback_id}")
 
     async def add_download(
         self,
@@ -103,6 +127,8 @@ class QueueManager:
 
     async def _process_queue(self):
         """Process queued downloads up to max concurrency."""
+        tasks_to_start = []
+
         async with self._queue_lock:
             # Find queued tasks
             queued = [t for t in self.tasks.values() if t.status == DownloadStatus.QUEUED]
@@ -110,78 +136,104 @@ class QueueManager:
             # Start downloads up to max_concurrent
             available_slots = self.max_concurrent - len(self.active_downloads)
             for task in queued[:available_slots]:
-                asyncio.create_task(self._start_download(task))
+                # Mark as starting and add to active set BEFORE releasing lock
+                # This prevents race condition where multiple _process_queue calls
+                # could start more downloads than max_concurrent
+                task.status = DownloadStatus.DOWNLOADING
+                self.active_downloads.add(task.id)
+                tasks_to_start.append(task)
+
+        # Start downloads outside the lock to avoid blocking
+        for task in tasks_to_start:
+            asyncio.create_task(self._start_download(task))
 
     async def _start_download(self, task: DownloadTask):
-        """Start a download task."""
-        task.status = DownloadStatus.DOWNLOADING
-        self.active_downloads.add(task.id)
-        await self._notify_progress(task)
+        """Start a download task.
 
-        # Create download request
-        dest_path = Path(task.dest_dir) / (task.filename or "download.bin")
-        request = DLRequest(
-            url=task.url,
-            dest_file=dest_path,
-            explicit_filename=task.filename,
-            connections=task.connections,
-            adaptive_connections=task.adaptive,
-        )
+        Note: Task status and active_downloads are already set by _process_queue
+        before this is called, to prevent race conditions.
+        """
+        try:
+            # Notify that download is starting
+            await self._notify_progress(task, force=True)
 
-        # Create manager with signal connections
-        manager = DownloadManager(request)
-        task.manager = manager
-        task.dest_path = dest_path
+            # Create download request
+            dest_path = Path(task.dest_dir) / (task.filename or "download.bin")
+            request = DLRequest(
+                url=task.url,
+                dest_file=dest_path,
+                explicit_filename=task.filename,
+                connections=task.connections,
+                adaptive_connections=task.adaptive,
+            )
 
-        # Connect signals
-        def on_progress(received: int, total: int):
-            task.received_bytes = received
-            task.total_bytes = total
-            # Schedule async notification from Qt thread
-            if self._loop:
-                asyncio.run_coroutine_threadsafe(self._notify_progress(task), self._loop)
-            else:
-                print(f"[DEBUG] No event loop available for progress update")
+            # Create manager with signal connections
+            manager = DownloadManager(request)
+            task.manager = manager
+            task.dest_path = dest_path
 
-        def on_speed(bps: float):
-            task.speed_bps = bps
-            if self._loop:
-                asyncio.run_coroutine_threadsafe(self._notify_progress(task), self._loop)
+            # Connect signals
+            def on_progress(received: int, total: int):
+                task.received_bytes = received
+                task.total_bytes = total
+                # Throttle progress updates to avoid WebSocket flooding
+                current_time = time.time()
+                if current_time - task.last_progress_update >= self.PROGRESS_THROTTLE_INTERVAL:
+                    task.last_progress_update = current_time
+                    if self._loop:
+                        asyncio.run_coroutine_threadsafe(self._notify_progress(task), self._loop)
 
-        def on_finished(success: bool, message: str):
-            print(f"[DEBUG] Download finished: success={success}, message={message}")
-            if success:
-                task.status = DownloadStatus.COMPLETED
-                task.completed_at = datetime.utcnow().isoformat()
-            else:
-                task.status = DownloadStatus.FAILED
-                task.error_message = message
+            def on_speed(bps: float):
+                task.speed_bps = bps
+                # Speed updates are already throttled by progress throttling
+                # No need to send separate speed updates
 
+            def on_finished(success: bool, message: str):
+                logger.info(f"Download {task.id} finished: success={success}, message={message}")
+                if success:
+                    task.status = DownloadStatus.COMPLETED
+                    task.completed_at = datetime.utcnow().isoformat()
+                else:
+                    task.status = DownloadStatus.FAILED
+                    task.error_message = message
+
+                self.active_downloads.discard(task.id)
+                if self._loop:
+                    asyncio.run_coroutine_threadsafe(self._notify_progress(task, force=True), self._loop)
+                    asyncio.run_coroutine_threadsafe(self._process_queue(), self._loop)
+
+            # Use Qt.DirectConnection to ensure callbacks fire immediately from worker thread
+            from PySide6.QtCore import Qt
+            manager.progress.connect(on_progress, Qt.ConnectionType.DirectConnection)
+            manager.speed.connect(on_speed, Qt.ConnectionType.DirectConnection)
+            manager.finished.connect(on_finished, Qt.ConnectionType.DirectConnection)
+            logger.debug(f"Connected signals for task {task.id}")
+
+            # Start download in thread
+            manager.start()
+            logger.info(f"Started download task {task.id} for {task.url}")
+
+        except Exception as e:
+            logger.error(f"Failed to start download {task.id}: {e}", exc_info=True)
+            task.status = DownloadStatus.FAILED
+            task.error_message = f"Failed to start: {str(e)}"
             self.active_downloads.discard(task.id)
-            if self._loop:
-                asyncio.run_coroutine_threadsafe(self._notify_progress(task), self._loop)
-                asyncio.run_coroutine_threadsafe(self._process_queue(), self._loop)
-            else:
-                print(f"[DEBUG] No event loop available for finished notification")
+            await self._notify_progress(task, force=True)
+            await self._process_queue()
 
-        # Use Qt.DirectConnection to ensure callbacks fire immediately from worker thread
-        from PySide6.QtCore import Qt
-        manager.progress.connect(on_progress, Qt.ConnectionType.DirectConnection)
-        manager.speed.connect(on_speed, Qt.ConnectionType.DirectConnection)
-        manager.finished.connect(on_finished, Qt.ConnectionType.DirectConnection)
-        print(f"[DEBUG] Connected signals for task {task.id}")
+    async def _notify_progress(self, task: DownloadTask, force: bool = False):
+        """Notify all registered callbacks of progress.
 
-        # Start download in thread
-        manager.start()
-
-    async def _notify_progress(self, task: DownloadTask):
-        """Notify all registered callbacks of progress."""
-        print(f"[DEBUG] Notifying progress: {task.id} - {task.received_bytes}/{task.total_bytes} - status={task.status}")
-        for callback in self.progress_callbacks:
+        Args:
+            task: The download task to notify about
+            force: If True, bypass throttling (used for important status changes)
+        """
+        logger.debug(f"Notifying progress: {task.id} - {task.received_bytes}/{task.total_bytes} - status={task.status}")
+        for callback_id, callback in list(self.progress_callbacks.items()):
             try:
                 await callback(task.to_info())
             except Exception as e:
-                print(f"[DEBUG] Error in progress callback: {e}")
+                logger.error(f"Error in progress callback {callback_id}: {e}", exc_info=True)
 
     def get_download(self, download_id: str) -> Optional[DownloadInfo]:
         """Get download info by ID."""
@@ -234,3 +286,67 @@ class QueueManager:
                 del self.tasks[download_id]
                 return True
         return False
+
+    async def cleanup_completed(self) -> int:
+        """Clean up old completed/failed/cancelled downloads.
+
+        Returns:
+            Number of downloads removed
+        """
+        removed_count = 0
+        current_time = datetime.utcnow()
+
+        async with self._queue_lock:
+            to_remove = []
+
+            for task_id, task in self.tasks.items():
+                # Only consider finished tasks
+                if task.status not in (DownloadStatus.COMPLETED, DownloadStatus.FAILED, DownloadStatus.CANCELLED):
+                    continue
+
+                # Remove if completed_at timestamp is old enough
+                if task.completed_at:
+                    try:
+                        completed_time = datetime.fromisoformat(task.completed_at)
+                        age_hours = (current_time - completed_time).total_seconds() / 3600
+
+                        if age_hours >= self.auto_cleanup_hours:
+                            to_remove.append(task_id)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid completed_at timestamp for task {task_id}")
+
+            # Also enforce max completed limit
+            completed_tasks = [
+                (task_id, task) for task_id, task in self.tasks.items()
+                if task.status in (DownloadStatus.COMPLETED, DownloadStatus.FAILED, DownloadStatus.CANCELLED)
+            ]
+
+            if len(completed_tasks) > self.max_completed:
+                # Sort by completion time (oldest first)
+                completed_tasks.sort(key=lambda x: x[1].completed_at or x[1].created_at)
+                excess = len(completed_tasks) - self.max_completed
+                for task_id, _ in completed_tasks[:excess]:
+                    if task_id not in to_remove:
+                        to_remove.append(task_id)
+
+            # Remove the tasks
+            for task_id in to_remove:
+                del self.tasks[task_id]
+                removed_count += 1
+
+        if removed_count > 0:
+            logger.info(f"Cleaned up {removed_count} old downloads")
+
+        return removed_count
+
+    async def _periodic_cleanup(self):
+        """Periodic cleanup task that runs every hour."""
+        while True:
+            try:
+                await asyncio.sleep(3600)  # Run every hour
+                await self.cleanup_completed()
+            except asyncio.CancelledError:
+                logger.info("Periodic cleanup task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in periodic cleanup: {e}", exc_info=True)

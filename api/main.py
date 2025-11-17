@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List
@@ -19,6 +20,9 @@ from .models import (
     Settings,
 )
 from .queue_manager import QueueManager
+from downloader.utils import is_valid_url
+
+logger = logging.getLogger(__name__)
 
 
 # Global queue manager
@@ -39,7 +43,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Motherless Downloader API",
-    version="0.2.1",
+    version="0.2.2",
     lifespan=lifespan
 )
 
@@ -112,7 +116,7 @@ ws_manager = ConnectionManager()
 @app.get("/api/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok", "version": "0.2.1"}
+    return {"status": "ok", "version": "0.2.2"}
 
 
 @app.get("/api/downloads", response_model=List[DownloadInfo])
@@ -140,6 +144,10 @@ async def create_download(request: DownloadRequest):
     """Create a new download."""
     if not queue_manager:
         raise HTTPException(500, "Queue manager not initialized")
+
+    # Validate URL before adding to queue
+    if not is_valid_url(request.url):
+        raise HTTPException(400, "Invalid URL: Must be HTTPS and from allowed domains")
 
     download_id = await queue_manager.add_download(
         url=request.url,
@@ -198,6 +206,16 @@ async def remove_download(download_id: str):
     if not success:
         raise HTTPException(404, "Download not found")
     return {"status": "removed"}
+
+
+@app.post("/api/downloads/cleanup")
+async def cleanup_completed():
+    """Clean up old completed/failed/cancelled downloads."""
+    if not queue_manager:
+        raise HTTPException(500, "Queue manager not initialized")
+
+    removed_count = await queue_manager.cleanup_completed()
+    return {"removed": removed_count, "status": "ok"}
 
 
 @app.get("/api/settings", response_model=Settings)
@@ -259,20 +277,21 @@ async def update_settings(update: SettingsUpdate):
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time progress updates."""
     await ws_manager.connect(websocket)
+    callback_id = None
 
     # Register progress callback
     async def progress_callback(download_info: DownloadInfo):
-        print(f"[DEBUG] Broadcasting progress via WebSocket: {download_info.id}")
+        logger.debug(f"Broadcasting progress via WebSocket: {download_info.id}")
         await ws_manager.broadcast({
             "type": "progress",
             "data": download_info.dict()
         })
 
     if queue_manager:
-        print(f"[DEBUG] Registering progress callback for WebSocket")
-        queue_manager.register_progress_callback(progress_callback)
+        callback_id = queue_manager.register_progress_callback(progress_callback)
+        logger.info(f"Registered progress callback {callback_id} for WebSocket")
     else:
-        print(f"[DEBUG] Queue manager not available!")
+        logger.error("Queue manager not available!")
 
     try:
         while True:
@@ -282,6 +301,10 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.send_text(f"Message received: {data}")
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
+        # Unregister callback to prevent memory leak
+        if queue_manager and callback_id is not None:
+            queue_manager.unregister_progress_callback(callback_id)
+            logger.info(f"Unregistered progress callback {callback_id}")
 
 
 # Serve frontend static files in production (after building)
