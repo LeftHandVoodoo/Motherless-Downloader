@@ -132,7 +132,7 @@
 ## Version 0.2.1 - Critical Bug Fixes & UI Improvements
 
 - ✅ **CRITICAL: STREAM CONTEXT FIX**: Fixed indentation bug where `with client.stream(...)` context was closing before reading response data, causing all download segments to fail with `httpx.StreamClosed` errors. All response stream operations now properly occur within the stream context.
-- ✅ **CRITICAL: WEBSOCKET UPDATES FIX**: Fixed Qt signal to asyncio event loop bridge; replaced `asyncio.create_task()` (which doesn't work from Qt threads) with `asyncio.run_coroutine_threadsafe()` for proper thread-safe scheduling. Progress, speed, and completion updates now properly broadcast to WebSocket clients.
+- ✅ **CRITICAL: WEBSOCKET UPDATES FIX**: Fixed Qt signal to asyncio event loop bridge; replaced `asyncio.create_task()` (which doesn't work from Qt threads) with `asyncio.run_coroutine_threadsafe()` for proper thread-safe scheduling. Used `Qt.DirectConnection` for signal connections to ensure callbacks fire immediately from worker threads. Progress, speed, and completion updates now properly broadcast to WebSocket clients.
 - ✅ **PROGRESS THROTTLING**: Added throttling to progress emissions (~10 times/second per segment) to prevent overwhelming the WebSocket with hundreds of updates per second; ensures smooth progress bar updates.
 - ✅ **SETTINGS UI IMPLEMENTED**: Added functional settings panel to web interface; gear icon now toggles settings view with download directory and default connections configuration.
 - ✅ **UI REDESIGN**: Changed color scheme from purple/blue to grayish black (zinc-950/gray-900) with zinc-800/zinc-700 UI elements for better contrast and modern appearance.

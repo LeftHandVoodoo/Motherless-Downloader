@@ -1,7 +1,7 @@
 # Motherless Downloader
 
 A modern download manager for Motherless media files with two interface options:
-- **Web Interface** (NEW in v0.2.0): FastAPI + React with real-time WebSocket updates, multi-download queue
+- **Web Interface** (v0.2.1): FastAPI + React with real-time WebSocket updates, multi-download queue
 - **Desktop GUI** (Legacy): PySide6-based traditional desktop application
 
 Both interfaces share the same robust download engine with multi-connection support, pause/resume, and adaptive connection management.
@@ -17,7 +17,7 @@ Both interfaces share the same robust download engine with multi-connection supp
 - **Media Discovery**: Auto-discovers direct media URLs from page URLs
 - **Cross-Platform**: Windows, Linux, macOS support
 
-### Web Interface (NEW v0.2.0)
+### Web Interface (v0.2.1)
 - **Modern React UI**: Beautiful glassmorphism design with dark theme
 - **Download Queue**: Manage multiple downloads simultaneously
 - **Real-Time Updates**: WebSocket-based live progress tracking

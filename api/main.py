@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Motherless Downloader API",
-    version="0.2.0",
+    version="0.2.1",
     lifespan=lifespan
 )
 
@@ -112,7 +112,7 @@ ws_manager = ConnectionManager()
 @app.get("/api/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok", "version": "0.2.0"}
+    return {"status": "ok", "version": "0.2.1"}
 
 
 @app.get("/api/downloads", response_model=List[DownloadInfo])
