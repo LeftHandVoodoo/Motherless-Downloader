@@ -208,18 +208,13 @@ class QueueManager:
                             logger.warning(f"Failed to clean up partial files for {task.id}: {e}")
 
                 self.active_downloads.discard(task.id)
-                # Clean up thread - wait for it to finish
-                if task.manager:
-                    try:
-                        if task.manager.isRunning():
-                            task.manager.wait(3000)  # Wait up to 3 seconds
-                        task.manager = None
-                    except Exception as e:
-                        logger.warning(f"Error cleaning up thread for {task.id}: {e}")
                 
+                # Schedule cleanup asynchronously - don't wait from within the thread's own callback
                 if self._loop:
                     asyncio.run_coroutine_threadsafe(self._notify_progress(task, force=True), self._loop)
                     asyncio.run_coroutine_threadsafe(self._process_queue(), self._loop)
+                    # Clean up thread asynchronously after a short delay
+                    asyncio.run_coroutine_threadsafe(self._cleanup_thread_async(task.id), self._loop)
 
             # Use Qt.DirectConnection to ensure callbacks fire immediately from worker thread
             from PySide6.QtCore import Qt
@@ -239,6 +234,38 @@ class QueueManager:
             self.active_downloads.discard(task.id)
             await self._notify_progress(task, force=True)
             await self._process_queue()
+
+    async def _cleanup_thread_async(self, task_id: str):
+        """Clean up QThread asynchronously after download finishes.
+        
+        This is called from the asyncio event loop, not from within the thread itself,
+        preventing "Thread tried to wait on itself" errors.
+        """
+        await asyncio.sleep(0.5)  # Give thread a moment to finish naturally
+        
+        # Get task reference (brief lock)
+        async with self._queue_lock:
+            task = self.tasks.get(task_id)
+            if not task or not task.manager:
+                return
+            manager = task.manager
+        
+        # Wait for thread outside the lock (blocking, but in thread pool)
+        try:
+            if manager.isRunning():
+                # Request thread to quit
+                manager.quit()
+                # Run blocking wait in thread pool to avoid blocking event loop
+                await asyncio.to_thread(manager.wait, 2000)
+        except Exception as e:
+            logger.warning(f"Error waiting for thread {task_id}: {e}")
+        
+        # Clear reference (brief lock)
+        async with self._queue_lock:
+            task = self.tasks.get(task_id)
+            if task:
+                task.manager = None
+                logger.debug(f"Cleaned up thread for task {task_id}")
 
     async def _notify_progress(self, task: DownloadTask, force: bool = False):
         """Notify all registered callbacks of progress.
@@ -302,13 +329,9 @@ class QueueManager:
                 except Exception as e:
                     logger.warning(f"Failed to clean up partial files for {download_id}: {e}")
             
-            # Wait for thread to finish and clean up
-            try:
-                if task.manager.isRunning():
-                    task.manager.wait(3000)  # Wait up to 3 seconds
-                task.manager = None
-            except Exception as e:
-                logger.warning(f"Error cleaning up thread for {download_id}: {e}")
+            # Schedule thread cleanup asynchronously (don't wait from async context)
+            if self._loop:
+                asyncio.run_coroutine_threadsafe(self._cleanup_thread_async(download_id), self._loop)
             
             await self._notify_progress(task)
             await self._process_queue()

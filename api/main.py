@@ -336,10 +336,23 @@ async def websocket_endpoint(websocket: WebSocket):
                         logger.debug(f"Unknown WebSocket message type: {msg_type}")
                 except json.JSONDecodeError:
                     logger.warning(f"Invalid JSON in WebSocket message: {data}")
+            except (WebSocketDisconnect, RuntimeError) as e:
+                # RuntimeError can occur when trying to receive after disconnect
+                if "disconnect" in str(e).lower() or isinstance(e, WebSocketDisconnect):
+                    logger.info("WebSocket client disconnected")
+                    break
+                else:
+                    logger.error(f"Error handling WebSocket message: {e}", exc_info=True)
             except Exception as e:
                 logger.error(f"Error handling WebSocket message: {e}", exc_info=True)
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
+    except RuntimeError as e:
+        # Handle RuntimeError from disconnected WebSocket
+        if "disconnect" in str(e).lower():
+            logger.info("WebSocket client disconnected (RuntimeError)")
+        else:
+            logger.error(f"WebSocket RuntimeError: {e}", exc_info=True)
     finally:
         ws_manager.disconnect(websocket)
         # Unregister callback to prevent memory leak
