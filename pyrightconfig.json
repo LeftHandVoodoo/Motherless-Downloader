@@ -1,0 +1,13 @@
+{
+  "include": ["."],
+  "venvPath": ".",
+  "venv": ".venv",
+  "typeCheckingMode": "basic",
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "venv": ".venv",
+      "pythonVersion": "3.12"
+    }
+  ]
+}
