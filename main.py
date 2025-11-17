@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QGroupBox,
 )
+from platformdirs import user_downloads_dir
 
 from downloader import (
     validate_url,
@@ -82,7 +83,8 @@ class MainWindow(QWidget):
         if isinstance(last_dir_val, str) and last_dir_val.strip():
             default_dir = last_dir_val
         else:
-            default_dir = str(Path("F:/Debrid Stage"))
+            # Use platform-appropriate downloads directory
+            default_dir = user_downloads_dir()
         self.dest_edit.setText(default_dir)
 
         # Filename
@@ -163,7 +165,7 @@ class MainWindow(QWidget):
             return
         self.validate_label.setText("")
 
-        dest_dir = self.dest_edit.text().strip() or str(Path.home() / "Downloads")
+        dest_dir = self.dest_edit.text().strip() or user_downloads_dir()
         dest_path = Path(dest_dir)
         dest_path.mkdir(parents=True, exist_ok=True)
         self._settings.setValue("lastDownloadDir", str(dest_path))

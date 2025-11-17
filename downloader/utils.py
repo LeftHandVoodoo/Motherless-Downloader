@@ -5,7 +5,6 @@ from typing import Optional, Tuple
 from urllib.parse import urlparse
 import hashlib
 import re
-import re as _re
 
 ALLOWED_HOST_SUFFIXES: Tuple[str, ...] = (
     ".motherless.com",
@@ -56,7 +55,7 @@ def validate_url(url: str) -> UrlValidationResult:
     return UrlValidationResult(True, "OK")
 
 
-_FILENAME_RE = re.compile(r"filename\*=UTF-8''(?P<f>[^;]+)|filename=(?P<f2>\"?([^\";]+)\"?)", re.IGNORECASE)
+_FILENAME_RE = re.compile(r"filename\*=UTF-8''(?P<utf8>[^;]+)|filename=\"?(?P<regular>[^\";]+)\"?", re.IGNORECASE)
 
 
 def extract_filename_from_content_disposition(header_value: Optional[str]) -> Optional[str]:
@@ -65,7 +64,7 @@ def extract_filename_from_content_disposition(header_value: Optional[str]) -> Op
     match = _FILENAME_RE.search(header_value)
     if not match:
         return None
-    filename = match.group('f') or match.group(3)
+    filename = match.group('utf8') or match.group('regular')
     if not filename:
         return None
     return filename.strip().strip('"')
@@ -75,7 +74,7 @@ def get_url_hash(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
 
 
-_INVALID_CHARS = _re.compile(r"[\\/:*?\"<>|]+")
+_INVALID_CHARS = re.compile(r"[\\/:*?\"<>|]+")
 
 
 def sanitize_title_for_fs(title: str) -> str:
