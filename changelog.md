@@ -186,3 +186,99 @@
 - ✅ **PROPER RESOURCE CLEANUP**: WebSocket connections now properly clean up associated callbacks, preventing resource leaks.
 - ✅ **IMPROVED DOCUMENTATION**: Added detailed docstrings explaining race condition fixes and callback lifecycle management.
 
+## Version 0.3.2 - Filename Normalization
+
+### 📝 Filename Normalization
+- ✅ **AUTOMATIC FILENAME NORMALIZATION**: Added `normalize_filename()` function to clean and normalize filenames before saving.
+- ✅ **REMOVE TRAILING IDs**: Automatically removes trailing underscore + number/alphanumeric patterns (e.g., "_5377767", "_xhaSMU3", "_13182028").
+- ✅ **REMOVE EMBEDDED NUMBERS**: Removes random number strings embedded in filenames (e.g., "video123" -> "Video", "abc123def456" -> "Abcdef").
+- ✅ **PRESERVE QUALITY INDICATORS**: Preserves video quality indicators (720p, 1080p, 4K, 8K, HD, SD) with proper formatting.
+- ✅ **PRESERVE PARENTHESES**: Preserves parentheses content, especially years (e.g., "(1985)", "(2020)").
+- ✅ **PRESERVE MEANINGFUL NUMBERS**: Preserves single and double-digit numbers that are part of meaningful text (e.g., "2 British", "18 year old", "Part 2").
+- ✅ **TITLE CASE CAPITALIZATION**: Applies proper title case capitalization (first letter of each word capitalized, common words lowercase, "And" capitalized when connecting phrases).
+- ✅ **SPACING NORMALIZATION**: Normalizes spacing by converting underscores, hyphens, and multiple spaces to single spaces.
+- ✅ **PRESERVE EXTENSIONS**: File extensions are preserved during normalization.
+- ✅ **AUTOMATIC RENAMING**: Files are automatically renamed after download completion if normalization changes the filename.
+- ✅ **INTEGRATION**: Normalization applied in both `DownloadManager` (legacy GUI) and `QueueManager` (web interface).
+
+### 🧪 Testing
+- ✅ **EDGE CASE HANDLING**: Comprehensive handling of edge cases including trailing IDs, quality indicators, parentheses, meaningful numbers, and various capitalization scenarios.
+
+### 🔧 Migration Tool
+- ✅ **FILENAME MIGRATION SCRIPT**: Added `migrate_normalize_filenames.py` script to normalize existing filenames in the history database.
+- ✅ **DRY RUN MODE**: Script supports `--dry-run` flag to preview changes without modifying the database.
+- ✅ **FILE RENAMING OPTION**: Optional `--rename-files` flag to also rename actual files on disk to match normalized names.
+- ✅ **SAFE OPERATION**: Script safely updates database entries and handles errors gracefully, with detailed progress reporting.
+
+### 🎬 VLC Integration
+- ✅ **OPEN IN VLC**: Double-click on thumbnails in history view to open files in VLC media player.
+- ✅ **CROSS-PLATFORM VLC DETECTION**: Automatically finds VLC installation on Windows, macOS, and Linux.
+- ✅ **VISUAL FEEDBACK**: Thumbnails show cursor pointer and hover effect to indicate they're clickable.
+- ✅ **ERROR HANDLING**: Clear error messages if VLC is not found or file cannot be opened.
+
+## Version 0.3.1 - Automatic Highest Quality Selection
+
+### 🎯 Quality Selection
+- ✅ **AUTOMATIC HIGHEST QUALITY DETECTION**: Enhanced `discover_media_url()` to detect and select the highest quality version when multiple video sources are available on a page.
+- ✅ **RESOLUTION-BASED SELECTION**: Automatically selects source with highest resolution (height × width) when resolution attributes are available in HTML.
+- ✅ **QUALITY LABEL PARSING**: Extracts resolution from quality labels (e.g., "1080p", "720p") and estimates dimensions for comparison.
+- ✅ **FILE SIZE FALLBACK**: When resolution info is unavailable, performs HEAD requests to compare file sizes (larger = higher quality).
+- ✅ **MULTIPLE SOURCE DETECTION**: Finds all `<source>` tags in video elements, not just the first one.
+- ✅ **INTELLIGENT SORTING**: Prioritizes sources with resolution info, then falls back to file size comparison, ensuring best quality selection.
+- ✅ **LOGGING**: Detailed logging shows which source was selected and why (resolution, file size, quality label).
+
+### 🧪 Testing
+- ✅ **QUALITY SELECTION TESTS**: Comprehensive test suite covering single source, multiple sources by resolution, quality labels, and fallback behavior.
+
+## Version 0.3.0 - Download History Database & Thumbnails
+
+### 🗄️ Database & Persistence
+- ✅ **SQLITE HISTORY DATABASE**: Implemented persistent download history using SQLite database stored in platform-appropriate data directory; all downloads are automatically tracked with full metadata (URL, filename, size, status, timestamps, connections, error messages).
+- ✅ **AUTOMATIC TRACKING**: QueueManager now automatically saves downloads to history when added and updates status on completion/failure/cancellation; provides complete audit trail of all download activity.
+- ✅ **HISTORY SCHEMA**: Comprehensive database schema with indexed fields for efficient querying by status, date, and URL; includes total_bytes, received_bytes, speed_bps, connections, adaptive mode, created_at, completed_at, and updated_at timestamps.
+
+### 🔍 Search & Filter
+- ✅ **ADVANCED FILTERING**: Query history with pagination (limit/offset), status filter (COMPLETED/FAILED/CANCELLED), and full-text search on URLs and filenames; enables quick lookup of past downloads.
+- ✅ **AGGREGATE STATISTICS**: Real-time statistics API providing total downloads, completed count, failed count, cancelled count, total bytes across all downloads, and total successfully downloaded bytes.
+- ✅ **CLEANUP OPERATIONS**: Manual and automatic cleanup of old history entries with configurable retention period (default 30 days); supports cleanup by status type (e.g., only remove old completed downloads).
+
+### 🌐 API Endpoints
+- ✅ **GET /api/history**: Retrieve download history with optional filtering (limit, offset, status, search); returns paginated list of historical downloads.
+- ✅ **GET /api/history/statistics**: Get aggregate statistics (total, completed, failed, cancelled, total_bytes, completed_bytes).
+- ✅ **GET /api/history/{download_id}**: Retrieve specific download from history by ID.
+- ✅ **DELETE /api/history/{download_id}**: Remove specific download from history database.
+- ✅ **POST /api/history/clear**: Clear old downloads from history with configurable age threshold (default 30 days) and optional status filter.
+
+### 🎨 UI Enhancements
+- ✅ **HISTORY TAB**: Added dedicated History tab in web interface with tab navigation to switch between active Download Queue and historical Downloads.
+- ✅ **HISTORY STATISTICS PANEL**: Six-card statistics dashboard showing Total, Completed, Failed, Cancelled downloads, plus Total Size and Downloaded Size with color-coded displays.
+- ✅ **SEARCH & FILTER UI**: Search bar for filtering by URL/filename and dropdown filter for status (All/Completed/Failed/Cancelled); real-time filtering updates results instantly.
+- ✅ **HISTORY ITEM CARDS**: Each history item displays filename, URL, status badge, file size, downloaded bytes, creation date, completion date, and error message if applicable.
+- ✅ **BULK CLEANUP**: "Clear Old (30d+)" button for removing downloads older than 30 days; individual delete buttons for each history item with confirmation dialogs.
+- ✅ **DATE FORMATTING**: Human-readable date/time formatting for created_at and completed_at timestamps using browser locale.
+
+### 🧪 Testing
+- ✅ **COMPREHENSIVE TEST SUITE**: Added 15 tests covering all history database operations (add, update, delete, query, statistics, cleanup) with 100% pass rate.
+- ✅ **DATABASE INITIALIZATION**: Tests for schema creation and database initialization in temporary directories.
+- ✅ **CRUD OPERATIONS**: Tests for create, read, update, delete operations with both success and error cases.
+- ✅ **FILTERING & SEARCH**: Tests for pagination, status filtering, and text search functionality.
+- ✅ **STATISTICS ACCURACY**: Tests verifying correct aggregation of download counts and byte totals.
+- ✅ **CLEANUP LOGIC**: Tests for time-based cleanup with configurable retention periods and status filtering.
+
+### 🏗️ Architecture
+- ✅ **DOWNLOADHISTORY CLASS**: New downloader/history.py module with comprehensive SQLite database management; handles all database operations with proper error handling and logging.
+- ✅ **QUEUEMANAGER INTEGRATION**: History database instance created on QueueManager initialization; automatic tracking on add_download(), on_finished(), and cancel_download().
+- ✅ **PLATFORM-APPROPRIATE STORAGE**: Database stored in user data directory using platformdirs (e.g., Windows: AppData\Local, Linux: ~/.local/share, macOS: ~/Library/Application Support).
+- ✅ **INDEXED QUERIES**: Database indexes on status, created_at, and url fields for fast filtering and search operations.
+- ✅ **DATABASE PATH DISPLAY**: Added GET /api/history/db-path endpoint and UI display showing the database file location; users can open the SQLite file directly with any SQLite viewer for advanced inspection or export.
+- ✅ **ENHANCED FILENAME TRACKING**: Database now tracks both `url_filename` (extracted from URL) and `filename` (actual saved filename); automatically extracts filename from URL path when adding downloads.
+- ✅ **FILE EXISTENCE TRACKING**: Added `file_exists` column to track whether downloaded files still exist at their save location; automatically checked when retrieving history items.
+- ✅ **ACTUAL FILENAME DISPLAY**: History now displays the actual saved filename (extracted from file path) rather than URL filename; automatically updates when file is renamed during download.
+- ✅ **REDOWNLOAD FOR ALL ITEMS**: Redownload button now available for all history items (not just completed); preserves original save location and settings when redownloading.
+- ✅ **THUMBNAIL EXTRACTION FIXES**: Fixed thumbnail extraction to handle files renamed from `download.bin` to final filename; improved error handling and logging; thumbnails now extracted in separate thread to avoid blocking.
+- ✅ **FILE RENAME DETECTION**: Automatically detects when files are renamed after download completion and updates history with correct path; ensures thumbnails are extracted from actual file location.
+- ✅ **VIDEO THUMBNAIL EXTRACTION**: Automatic thumbnail extraction from completed video downloads using ffmpeg; extracts frame at 1 second mark, scales to 320px width, saves as JPG alongside video file; thumbnail path stored in database for display in history.
+- ✅ **THUMBNAIL DISPLAY IN HISTORY**: History items now display video thumbnails (128x80px) when available; thumbnails load via GET /api/history/{id}/thumbnail endpoint; graceful fallback if thumbnail missing or extraction failed.
+- ✅ **REDOWNLOAD FROM HISTORY**: Added POST /api/history/{id}/redownload endpoint to queue downloads from history; preserves original URL, filename, connections, and adaptive settings; automatically switches to Download Queue view after queuing.
+- ✅ **REDOWNLOAD BUTTON**: Redownload button now available for all history items (not just completed); clicking queues the download and switches to queue view; enables easy re-downloading of previously completed files.
+

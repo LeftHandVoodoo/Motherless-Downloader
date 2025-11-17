@@ -11,6 +11,8 @@ from typing import Dict, Optional, Callable
 from platformdirs import user_downloads_dir
 
 from downloader.manager import DownloadManager, DownloadRequest as DLRequest
+from downloader.history import DownloadHistory
+from downloader.thumbnail import extract_thumbnail
 from .models import DownloadStatus, DownloadInfo
 
 logger = logging.getLogger(__name__)
@@ -63,6 +65,29 @@ class DownloadTask:
             created_at=self.created_at,
             completed_at=self.completed_at,
         )
+    
+    def to_history_dict(self) -> dict:
+        """Convert to dictionary for history database."""
+        from urllib.parse import urlparse
+        parsed = urlparse(self.url)
+        url_filename = Path(parsed.path).name if parsed.path else None
+        
+        return {
+            "id": self.id,
+            "url": self.url,
+            "filename": self.filename or "",
+            "url_filename": url_filename,
+            "dest_path": str(self.dest_path) if self.dest_path else self.dest_dir,
+            "status": self.status.value,
+            "total_bytes": self.total_bytes,
+            "received_bytes": self.received_bytes,
+            "speed_bps": self.speed_bps,
+            "connections": self.connections,
+            "adaptive": self.adaptive,
+            "error_message": self.error_message,
+            "created_at": self.created_at,
+            "completed_at": self.completed_at,
+        }
 
 
 class QueueManager:
@@ -80,6 +105,7 @@ class QueueManager:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self.PROGRESS_THROTTLE_INTERVAL = 0.5  # seconds between updates
         self._cleanup_task: Optional[asyncio.Task] = None
+        self.history = DownloadHistory()  # Initialize download history database
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop):
         """Set the asyncio event loop for thread-safe task scheduling."""
@@ -119,6 +145,10 @@ class QueueManager:
 
         async with self._queue_lock:
             self.tasks[task.id] = task
+        
+        # Add to history database
+        self.history.add_download(task.to_history_dict())
+        logger.debug(f"Added download {task.id} to history database")
 
         # Try to start immediately if under concurrency limit
         await self._process_queue()
@@ -190,9 +220,101 @@ class QueueManager:
 
             def on_finished(success: bool, message: str):
                 logger.info(f"Download {task.id} finished: success={success}, message={message}")
+                thumbnail_path = None
+                
                 if success:
                     task.status = DownloadStatus.COMPLETED
                     task.completed_at = datetime.utcnow().isoformat()
+                    
+                    # Update dest_path to actual file (file may have been renamed from download.bin to final name)
+                    if task.dest_path and not task.dest_path.exists():
+                        # File was renamed - find the actual file
+                        dest_dir = task.dest_path.parent
+                        if dest_dir.exists():
+                            # Look for recently modified files in the directory
+                            try:
+                                recent_files = sorted(
+                                    dest_dir.glob("*"),
+                                    key=lambda p: p.stat().st_mtime if p.is_file() else 0,
+                                    reverse=True
+                                )
+                                # Find the first file that's not a part file or sidecar
+                                for f in recent_files[:5]:  # Check top 5 most recent
+                                    if f.is_file() and not f.name.endswith(('.part', '.part.json')):
+                                        # Check if it was modified recently (within last minute)
+                                        if time.time() - f.stat().st_mtime < 60:
+                                            logger.info(f"Found renamed file for {task.id}: {f.name} (was {task.dest_path.name})")
+                                            task.dest_path = f
+                                            break
+                            except Exception as e:
+                                logger.warning(f"Failed to find renamed file for {task.id}: {e}")
+                    
+                    # Extract thumbnail for video files
+                    # Run thumbnail extraction asynchronously to avoid blocking the callback
+                    def extract_thumb_async():
+                        try:
+                            if not task.dest_path:
+                                logger.warning(f"Skipping thumbnail extraction for {task.id}: dest_path is None")
+                                return
+                            
+                            if not task.dest_path.exists():
+                                logger.warning(f"Skipping thumbnail extraction for {task.id}: file does not exist: {task.dest_path}")
+                                return
+                            
+                            logger.info(f"Attempting thumbnail extraction for {task.id}: {task.dest_path}")
+                            logger.info(f"File extension: {task.dest_path.suffix}")
+                            logger.info(f"File size: {task.dest_path.stat().st_size:,} bytes")
+                            
+                            # Update filename in database to actual saved filename
+                            if task.dest_path.exists():
+                                actual_filename = task.dest_path.name
+                                # Normalize the filename (remove random numbers, capitalize appropriately)
+                                from downloader.utils import normalize_filename
+                                normalized_filename = normalize_filename(actual_filename)
+                                # If normalization changed the name, rename the file
+                                if normalized_filename != actual_filename:
+                                    normalized_path = task.dest_path.parent / normalized_filename
+                                    try:
+                                        task.dest_path.rename(normalized_path)
+                                        task.dest_path = normalized_path
+                                        actual_filename = normalized_filename
+                                        logger.info(f"Renamed file for {task.id}: {task.dest_path.name} -> {normalized_filename}")
+                                    except Exception as e:
+                                        logger.warning(f"Failed to rename file for {task.id}: {e}")
+                                        # Continue with original filename if rename fails
+                                if actual_filename != task.filename:
+                                    logger.debug(f"Updating filename for {task.id}: {task.filename} -> {actual_filename}")
+                                    if self._loop:
+                                        asyncio.run_coroutine_threadsafe(
+                                            self._update_filename(task.id, actual_filename),
+                                            self._loop
+                                        )
+                            
+                            thumb = extract_thumbnail(task.dest_path)
+                            if thumb:
+                                thumbnail_path_str = str(thumb)
+                                logger.info(f"Successfully extracted thumbnail for {task.id}: {thumbnail_path_str}")
+                                # Update history with thumbnail path
+                                if self._loop:
+                                    try:
+                                        asyncio.run_coroutine_threadsafe(
+                                            self._update_thumbnail(task.id, thumbnail_path_str),
+                                            self._loop
+                                        )
+                                    except Exception as e:
+                                        logger.error(f"Failed to schedule thumbnail update: {e}", exc_info=True)
+                            else:
+                                logger.warning(f"Thumbnail extraction returned None for {task.id} - check logs above for reason")
+                        except Exception as e:
+                            logger.error(f"Failed to extract thumbnail for {task.id}: {e}", exc_info=True)
+                    
+                    # Run thumbnail extraction in a thread to avoid blocking
+                    # Use non-daemon thread to ensure it completes
+                    import threading
+                    thumb_thread = threading.Thread(target=extract_thumb_async, name=f"ThumbExtract-{task.id}")
+                    thumb_thread.daemon = False  # Ensure thread completes
+                    thumb_thread.start()
+                    logger.debug(f"Started thumbnail extraction thread for {task.id}")
                 else:
                     task.status = DownloadStatus.FAILED
                     task.error_message = message
@@ -208,6 +330,47 @@ class QueueManager:
                             logger.warning(f"Failed to clean up partial files for {task.id}: {e}")
 
                 self.active_downloads.discard(task.id)
+                
+                # Update history database with final status (thumbnail will be updated separately if extraction succeeds)
+                # Extract actual filename from path if available
+                actual_filename = None
+                if task.dest_path and task.dest_path.exists():
+                    actual_filename = task.dest_path.name
+                elif task.dest_path:
+                    # Even if file doesn't exist, use the path name
+                    actual_filename = task.dest_path.name
+                
+                # Normalize filename if we have one
+                if actual_filename:
+                    from downloader.utils import normalize_filename
+                    normalized_filename = normalize_filename(actual_filename)
+                    # If normalization changed the name and file exists, try to rename it
+                    if normalized_filename != actual_filename and task.dest_path and task.dest_path.exists():
+                        normalized_path = task.dest_path.parent / normalized_filename
+                        try:
+                            task.dest_path.rename(normalized_path)
+                            task.dest_path = normalized_path
+                            actual_filename = normalized_filename
+                            logger.info(f"Renamed file for {task.id} on completion: {task.dest_path.name} -> {normalized_filename}")
+                        except Exception as e:
+                            logger.warning(f"Failed to rename file for {task.id} on completion: {e}")
+                            # Continue with original filename if rename fails
+                    elif normalized_filename != actual_filename:
+                        # File doesn't exist, but update the stored filename anyway
+                        actual_filename = normalized_filename
+                
+                update_data = {
+                    "status": task.status.value,
+                    "total_bytes": task.total_bytes,
+                    "received_bytes": task.received_bytes,
+                    "error_message": task.error_message,
+                    "completed_at": task.completed_at,
+                    "dest_path": str(task.dest_path) if task.dest_path else task.dest_dir,
+                    "filename": actual_filename or task.filename or ""
+                }
+                
+                self.history.update_download(task.id, update_data)
+                logger.debug(f"Updated download {task.id} in history database")
                 
                 # Schedule cleanup asynchronously - don't wait from within the thread's own callback
                 if self._loop:
@@ -267,6 +430,30 @@ class QueueManager:
                 task.manager = None
                 logger.debug(f"Cleaned up thread for task {task_id}")
 
+    async def _update_filename(self, task_id: str, filename: str):
+        """Update history with actual filename after file is saved."""
+        try:
+            self.history.update_download(task_id, {"filename": filename})
+            logger.debug(f"Updated filename for {task_id}: {filename}")
+            # Notify clients of the update
+            task = self.tasks.get(task_id)
+            if task:
+                await self._notify_progress(task, force=True)
+        except Exception as e:
+            logger.error(f"Failed to update filename for {task_id}: {e}", exc_info=True)
+    
+    async def _update_thumbnail(self, task_id: str, thumbnail_path: str):
+        """Update history with thumbnail path after extraction completes."""
+        try:
+            self.history.update_download(task_id, {"thumbnail_path": thumbnail_path})
+            logger.info(f"Updated thumbnail path for {task_id}: {thumbnail_path}")
+            # Notify clients of the update
+            task = self.tasks.get(task_id)
+            if task:
+                await self._notify_progress(task, force=True)
+        except Exception as e:
+            logger.error(f"Failed to update thumbnail path for {task_id}: {e}", exc_info=True)
+    
     async def _notify_progress(self, task: DownloadTask, force: bool = False):
         """Notify all registered callbacks of progress.
 
@@ -316,6 +503,7 @@ class QueueManager:
         if task and task.manager:
             task.manager.cancel()
             task.status = DownloadStatus.CANCELLED
+            task.completed_at = datetime.utcnow().isoformat()
             self.active_downloads.discard(download_id)
             
             # Clean up partial files on cancel
@@ -328,6 +516,13 @@ class QueueManager:
                     logger.info(f"Cleaned up partial files for cancelled download {download_id}")
                 except Exception as e:
                     logger.warning(f"Failed to clean up partial files for {download_id}: {e}")
+            
+            # Update history database
+            self.history.update_download(download_id, {
+                "status": task.status.value,
+                "completed_at": task.completed_at
+            })
+            logger.debug(f"Updated cancelled download {download_id} in history database")
             
             # Schedule thread cleanup asynchronously (don't wait from async context)
             if self._loop:

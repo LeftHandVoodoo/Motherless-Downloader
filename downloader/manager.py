@@ -154,7 +154,7 @@ class DownloadManager(QThread):
                 # Fallback: GET page and discover media source URL
                 page = client.get(req.url, follow_redirects=True)
                 _dbg(f"GET page status={page.status_code} url={req.url}")
-                media = discover_media_url(page.text) if page.status_code == 200 else None
+                media = discover_media_url(page.text, prefer_highest_quality=True, http_client=client, base_url=str(page.url)) if page.status_code == 200 else None
                 if not media:
                     self.finished.emit(False, head.message)
                     return
@@ -209,6 +209,9 @@ class DownloadManager(QThread):
 
                 base_name = page_title or suggested
                 target_name = _apply_ext(base_name, head.content_type or "")
+                # Normalize filename (remove random numbers, capitalize appropriately)
+                from downloader.utils import normalize_filename
+                target_name = normalize_filename(target_name)
                 # Update final path and dependent paths to use the chosen filename
                 final_path = final_path.with_name(target_name)
                 part_path = build_part_path(final_path)

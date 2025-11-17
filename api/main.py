@@ -11,7 +11,11 @@ from typing import List
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
 from platformdirs import user_downloads_dir, user_config_dir
+import subprocess
+import shutil
+import platform
 
 from .models import (
     DownloadRequest,
@@ -21,6 +25,21 @@ from .models import (
 )
 from .queue_manager import QueueManager
 from downloader.utils import is_valid_url
+from downloader.thumbnail import extract_thumbnail
+
+# Configure logging - set to DEBUG for thumbnail debugging
+logging.basicConfig(
+    level=logging.DEBUG,  # Changed to DEBUG to see thumbnail extraction logs
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    force=True  # Force reconfiguration
+)
+
+# Set specific loggers to appropriate levels
+logging.getLogger("uvicorn").setLevel(logging.INFO)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("downloader.thumbnail").setLevel(logging.DEBUG)
+logging.getLogger("api.queue_manager").setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +62,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Motherless Downloader API",
-    version="0.2.2",
+    version="0.3.2",
     lifespan=lifespan
 )
 
@@ -135,7 +154,66 @@ ws_manager = ConnectionManager()
 @app.get("/api/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok", "version": "0.2.2"}
+    return {"status": "ok", "version": "0.3.2"}
+
+
+@app.post("/api/test-thumbnail")
+async def test_thumbnail(data: dict):
+    """Test thumbnail extraction on a file path."""
+    file_path = data.get("path")
+    if not file_path:
+        raise HTTPException(400, "path parameter required")
+    
+    path = Path(file_path)
+    if not path.exists():
+        raise HTTPException(404, f"File not found: {file_path}")
+    
+    logger.info(f"Testing thumbnail extraction for: {path}")
+    logger.info(f"File extension: {path.suffix}")
+    logger.info(f"File exists: {path.exists()}")
+    logger.info(f"File size: {path.stat().st_size if path.exists() else 0}")
+    
+    result = extract_thumbnail(path)
+    
+    if result:
+        return {
+            "success": True,
+            "thumbnail_path": str(result),
+            "exists": result.exists(),
+            "size": result.stat().st_size if result.exists() else 0
+        }
+    else:
+        return {
+            "success": False,
+            "message": "Thumbnail extraction returned None (check server logs for details)",
+            "file_extension": path.suffix,
+            "file_exists": path.exists()
+        }
+
+
+@app.get("/api/debug/recent-downloads")
+async def get_recent_downloads_info():
+    """Get information about recent downloads for debugging."""
+    if not queue_manager:
+        raise HTTPException(500, "Queue manager not initialized")
+    
+    # Get recent history items
+    recent = queue_manager.history.get_all_downloads(limit=10, offset=0)
+    
+    debug_info = []
+    for item in recent:
+        debug_info.append({
+            "id": item["id"],
+            "filename": item.get("filename"),
+            "dest_path": item.get("dest_path"),
+            "status": item.get("status"),
+            "thumbnail_path": item.get("thumbnail_path"),
+            "file_exists": Path(item.get("dest_path", "")).exists() if item.get("dest_path") else False,
+            "thumbnail_exists": Path(item.get("thumbnail_path", "")).exists() if item.get("thumbnail_path") else False,
+            "completed_at": item.get("completed_at")
+        })
+    
+    return {"recent_downloads": debug_info}
 
 
 @app.get("/api/downloads", response_model=List[DownloadInfo])
@@ -235,6 +313,216 @@ async def cleanup_completed():
 
     removed_count = await queue_manager.cleanup_completed()
     return {"removed": removed_count, "status": "ok"}
+
+
+@app.get("/api/history")
+async def get_history(
+    limit: int = 100,
+    offset: int = 0,
+    status: str | None = None,
+    search: str | None = None
+):
+    """Get download history with optional filtering."""
+    if not queue_manager:
+        raise HTTPException(500, "Queue manager not initialized")
+    
+    history_items = queue_manager.history.get_all_downloads(
+        limit=limit,
+        offset=offset,
+        status=status,
+        search=search
+    )
+    return {"items": history_items, "limit": limit, "offset": offset}
+
+
+@app.get("/api/history/statistics")
+async def get_history_statistics():
+    """Get aggregate statistics about download history."""
+    if not queue_manager:
+        raise HTTPException(500, "Queue manager not initialized")
+    
+    return queue_manager.history.get_statistics()
+
+
+@app.get("/api/history/db-path")
+async def get_history_db_path():
+    """Get the path to the history database file."""
+    if not queue_manager:
+        raise HTTPException(500, "Queue manager not initialized")
+    
+    return {
+        "path": str(queue_manager.history.db_path),
+        "exists": queue_manager.history.db_path.exists()
+    }
+
+
+@app.post("/api/history/clear")
+async def clear_old_history(days: int = 30, status: str | None = None):
+    """Clear old downloads from history."""
+    if not queue_manager:
+        raise HTTPException(500, "Queue manager not initialized")
+    
+    if days < 1:
+        raise HTTPException(400, "Days must be at least 1")
+    
+    removed_count = queue_manager.history.clear_old_downloads(days=days, status=status)
+    return {"removed": removed_count, "status": "ok"}
+
+
+@app.get("/api/history/{download_id}")
+async def get_history_item(download_id: str):
+    """Get a specific download from history."""
+    if not queue_manager:
+        raise HTTPException(500, "Queue manager not initialized")
+    
+    item = queue_manager.history.get_download(download_id)
+    if not item:
+        raise HTTPException(404, "Download not found in history")
+    return item
+
+
+@app.delete("/api/history/{download_id}")
+async def delete_history_item(download_id: str):
+    """Delete a specific download from history."""
+    if not queue_manager:
+        raise HTTPException(500, "Queue manager not initialized")
+    
+    success = queue_manager.history.delete_download(download_id)
+    if not success:
+        raise HTTPException(404, "Download not found in history")
+    return {"status": "deleted"}
+
+
+@app.post("/api/history/{download_id}/redownload")
+async def redownload_from_history(download_id: str):
+    """Redownload a file from history."""
+    if not queue_manager:
+        raise HTTPException(500, "Queue manager not initialized")
+    
+    # Get download info from history
+    history_item = queue_manager.history.get_download(download_id)
+    if not history_item:
+        raise HTTPException(404, "Download not found in history")
+    
+    # Validate URL
+    if not is_valid_url(history_item["url"]):
+        raise HTTPException(400, "Invalid URL in history")
+    
+    # Use original dest_dir if available, otherwise use current download_dir
+    dest_dir = None
+    if history_item.get("dest_path"):
+        dest_dir = str(Path(history_item["dest_path"]).parent)
+    else:
+        dest_dir = _settings.download_dir
+    
+    # Add to download queue
+    new_download_id = await queue_manager.add_download(
+        url=history_item["url"],
+        dest_dir=dest_dir,
+        filename=None,  # Let it auto-detect filename
+        connections=history_item.get("connections", 4),
+        adaptive=history_item.get("adaptive", True),
+    )
+    
+    return {"id": new_download_id, "status": "queued"}
+
+
+@app.get("/api/history/{download_id}/thumbnail")
+async def get_history_thumbnail(download_id: str):
+    """Get thumbnail image for a history item."""
+    if not queue_manager:
+        raise HTTPException(500, "Queue manager not initialized")
+    
+    history_item = queue_manager.history.get_download(download_id)
+    if not history_item:
+        raise HTTPException(404, "Download not found in history")
+    
+    thumbnail_path = history_item.get("thumbnail_path")
+    if not thumbnail_path:
+        raise HTTPException(404, "Thumbnail not available")
+    
+    thumb_path = Path(thumbnail_path)
+    if not thumb_path.exists():
+        raise HTTPException(404, "Thumbnail file not found")
+    
+    return FileResponse(thumb_path, media_type="image/jpeg")
+
+
+def find_vlc_executable() -> str | None:
+    """Find VLC executable path."""
+    system = platform.system()
+    
+    if system == "Windows":
+        # Common VLC installation paths on Windows
+        possible_paths = [
+            r"C:\Program Files\VideoLAN\VLC\vlc.exe",
+            r"C:\Program Files (x86)\VideoLAN\VLC\vlc.exe",
+            r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\VideoLAN\VLC media player.lnk",
+        ]
+        # Also check if vlc is in PATH
+        vlc_in_path = shutil.which("vlc")
+        if vlc_in_path:
+            return vlc_in_path
+        
+        for path in possible_paths:
+            if Path(path).exists():
+                return path
+    elif system == "Darwin":  # macOS
+        possible_paths = [
+            "/Applications/VLC.app/Contents/MacOS/VLC",
+            "/usr/local/bin/vlc",
+        ]
+        vlc_in_path = shutil.which("vlc")
+        if vlc_in_path:
+            return vlc_in_path
+        
+        for path in possible_paths:
+            if Path(path).exists():
+                return path
+    else:  # Linux
+        vlc_in_path = shutil.which("vlc")
+        if vlc_in_path:
+            return vlc_in_path
+        # Try common Linux paths
+        possible_paths = ["/usr/bin/vlc", "/usr/local/bin/vlc"]
+        for path in possible_paths:
+            if Path(path).exists():
+                return path
+    
+    return None
+
+
+@app.post("/api/history/{download_id}/open")
+async def open_file_in_vlc(download_id: str):
+    """Open the downloaded file in VLC media player."""
+    if not queue_manager:
+        raise HTTPException(500, "Queue manager not initialized")
+    
+    history_item = queue_manager.history.get_download(download_id)
+    if not history_item:
+        raise HTTPException(404, "Download not found in history")
+    
+    dest_path = history_item.get("dest_path")
+    if not dest_path:
+        raise HTTPException(404, "File path not available")
+    
+    file_path = Path(dest_path)
+    if not file_path.exists():
+        raise HTTPException(404, f"File not found: {dest_path}")
+    
+    # Find VLC executable
+    vlc_path = find_vlc_executable()
+    if not vlc_path:
+        raise HTTPException(500, "VLC not found. Please install VLC media player.")
+    
+    try:
+        # Launch VLC with the file
+        subprocess.Popen([vlc_path, str(file_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logger.info(f"Opened file in VLC: {file_path}")
+        return JSONResponse({"status": "opened", "file": str(file_path)})
+    except Exception as e:
+        logger.error(f"Failed to open file in VLC: {e}")
+        raise HTTPException(500, f"Failed to open file in VLC: {e}")
 
 
 @app.get("/api/settings", response_model=Settings)
