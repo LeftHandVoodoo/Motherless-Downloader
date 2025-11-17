@@ -141,3 +141,39 @@
 - ✅ **BROWSE BUTTON**: Added "Browse" button in settings to select download directory; uses File System Access API (Chrome/Edge) with fallback prompt; validates directory paths via backend endpoint.
 - ✅ **RESTART SCRIPT ADDED**: Created restart_server.py utility to stop existing server and start fresh instance.
 
+## Version 0.2.2 - Critical Bug Fixes & Performance Improvements
+
+### 🐛 Critical Bug Fixes
+- ✅ **CRITICAL: WEBSOCKET CALLBACK MEMORY LEAK**: Fixed memory leak where WebSocket connections registered progress callbacks but never unregistered on disconnect. Implemented callback ID system with `register_progress_callback()` returning ID and `unregister_progress_callback(callback_id)` for proper cleanup. Callbacks are now properly cleaned up when WebSocket disconnects.
+- ✅ **CRITICAL: PROGRESS UPDATE FLOODING**: Added throttling to prevent WebSocket flooding with 100+ progress updates per second. Implemented 0.5-second throttle interval using timestamp tracking; progress updates now fire at most 2x/second, preventing client-side performance degradation.
+- ✅ **CRITICAL: RACE CONDITION IN QUEUE PROCESSING**: Fixed race condition where concurrent calls to `_process_queue()` could start more downloads than `max_concurrent` limit. Now marks tasks as DOWNLOADING and adds to active_downloads set BEFORE releasing lock, ensuring proper concurrency control.
+
+### 🔧 Error Handling & Logging
+- ✅ **ERROR HANDLING IMPROVED**: Wrapped `_start_download()` in comprehensive try-except block to catch and handle download start failures gracefully; prevents uncaught exceptions from crashing queue manager.
+- ✅ **LOGGING MODULE INTEGRATION**: Replaced all debug `print()` statements with proper Python logging module (`logger.debug()`, `logger.info()`, `logger.error()`); enables proper log level filtering and structured logging.
+
+### ✨ New Features
+- ✅ **URL VALIDATION**: Added URL validation to `POST /api/downloads` endpoint using `is_valid_url()`; rejects invalid URLs with 400 error before adding to queue, providing immediate feedback.
+- ✅ **AUTO-CLEANUP SYSTEM**: Implemented automatic cleanup of old completed/failed/cancelled downloads with configurable `auto_cleanup_hours` (default: 24h) and `max_completed` (default: 100) limits. Periodic cleanup task runs hourly to prevent unbounded memory growth.
+- ✅ **MANUAL CLEANUP ENDPOINT**: Added `POST /api/downloads/cleanup` endpoint to manually trigger cleanup of old downloads; returns count of removed downloads.
+- ✅ **CLEAR COMPLETED BUTTON**: Added "Clear Completed" button to UI that appears when completed/failed/cancelled downloads exist; triggers manual cleanup via new API endpoint.
+- ✅ **DOWNLOAD STATISTICS PANEL**: Added 4-card statistics dashboard showing Total Downloads, Active (downloading), Completed, and Failed counts with color-coded display (blue, green, red).
+
+### 🎨 UI Improvements
+- ✅ **RESPONSIVE STATISTICS GRID**: Statistics cards use responsive grid layout (2 columns on mobile, 4 on desktop) with consistent styling.
+- ✅ **CONDITIONAL UI ELEMENTS**: Statistics panel and Clear Completed button only appear when relevant (downloads exist, completed items present).
+
+### 🏗️ Architecture Improvements
+- ✅ **CALLBACK DICTIONARY SYSTEM**: Changed callback storage from simple list to `Dict[int, Callable]` with auto-incrementing IDs for proper lifecycle management.
+- ✅ **PROGRESS NOTIFICATION FORCE FLAG**: Added `force` parameter to `_notify_progress()` to bypass throttling for important status changes (start, complete, error).
+- ✅ **TASK STATUS PRE-MARKING**: Queue processing now marks task status before starting async task, preventing race conditions in concurrent scenarios.
+
+### 📊 Performance
+- ✅ **REDUCED WEBSOCKET TRAFFIC**: Throttling reduces WebSocket messages from ~100/sec to 2/sec per download, dramatically improving client performance and reducing network overhead.
+- ✅ **BOUNDED MEMORY USAGE**: Auto-cleanup prevents unlimited growth of completed downloads list in memory.
+
+### 🔍 Code Quality
+- ✅ **CONSISTENT LOGGING**: All debug output now uses logging module with appropriate levels (debug, info, warning, error) instead of print statements.
+- ✅ **PROPER RESOURCE CLEANUP**: WebSocket connections now properly clean up associated callbacks, preventing resource leaks.
+- ✅ **IMPROVED DOCUMENTATION**: Added detailed docstrings explaining race condition fixes and callback lifecycle management.
+

@@ -50,6 +50,7 @@ export const downloadsApi = {
   resume: (id: string) => api.post(`/downloads/${id}/resume`),
   cancel: (id: string) => api.post(`/downloads/${id}/cancel`),
   remove: (id: string) => api.delete(`/downloads/${id}`),
+  cleanup: () => api.post<{ removed: number; status: string }>('/downloads/cleanup'),
 };
 
 export const settingsApi = {
