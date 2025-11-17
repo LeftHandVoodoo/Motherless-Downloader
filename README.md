@@ -27,6 +27,7 @@ Both interfaces share the same robust download engine with multi-connection supp
 - **REST API**: Full programmatic control via REST endpoints
 - **Responsive Design**: Works on desktop, tablet, and mobile
 - **Status Indicators**: Visual feedback for queued, downloading, paused, completed states
+- **Reliability**: Fixed memory leaks, proper thread cleanup, atomic settings writes, and automatic partial file cleanup
 
 ### Desktop GUI (Legacy)
 - **PySide6 Interface**: Traditional Qt-based desktop application
@@ -189,6 +190,8 @@ Settings are managed via the API and persisted per session:
 - **HTTP/2 Support**: Gracefully falls back to HTTP/1.1 if unavailable
 - **Permission Errors**: Sidecar writes are throttled and locked to prevent conflicts
 - **Resume Not Working**: Requires server support for range requests
+- **Memory Usage**: v0.2.2 includes fixes for memory leaks and proper resource cleanup
+- **Settings Corruption**: Settings are now written atomically to prevent corruption on crashes
 
 ### Web Interface
 - **Port Already in Use**: Stop any process using port 8000 or change port in `run.py`

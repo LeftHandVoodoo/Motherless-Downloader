@@ -370,7 +370,6 @@ class DownloadManager(QThread):
                                 # Throttle progress emissions to ~10 times per second per segment
                                 # With multiple segments, total emission rate is still reasonable
                                 if now - last_progress_time >= 0.1:
-                                    print(f"[DL] Emitting progress: {bytes_received}/{total_size}")
                                     self.progress.emit(bytes_received, total_size)
                                     last_progress_time = now
                             _dbg(f"seg#{seg_index} finished, downloaded {seg_bytes} bytes")
@@ -441,7 +440,6 @@ class DownloadManager(QThread):
             return
 
         # Emit final progress to ensure 100% is shown
-        print(f"[DL] Emitting final progress: {total_size}/{total_size}")
         self.progress.emit(total_size, total_size)
         
         # Move to final file atomically

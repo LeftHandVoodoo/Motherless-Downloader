@@ -55,6 +55,11 @@ def validate_url(url: str) -> UrlValidationResult:
     return UrlValidationResult(True, "OK")
 
 
+def is_valid_url(url: str) -> bool:
+    """Simple boolean wrapper for validate_url."""
+    return validate_url(url).is_valid
+
+
 _FILENAME_RE = re.compile(r"filename\*=UTF-8''(?P<utf8>[^;]+)|filename=\"?(?P<regular>[^\";]+)\"?", re.IGNORECASE)
 
 

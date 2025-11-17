@@ -80,10 +80,29 @@ def load_settings() -> Settings:
 
 
 def save_settings(settings: Settings) -> None:
-    """Save settings to file."""
+    """Save settings to file using atomic write to prevent corruption."""
+    import tempfile
+    import os
+    
     _settings_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(_settings_file, "w", encoding="utf-8") as f:
-        json.dump(settings.dict(), f, indent=2)
+    
+    # Atomic write: write to temp file, then rename
+    fd, tmp_path_str = tempfile.mkstemp(prefix=_settings_file.name, dir=str(_settings_file.parent))
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(settings.dict(), f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, _settings_file)
+    except Exception as e:
+        # Clean up temp file on error
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except Exception:
+            pass
+        raise
 
 
 # Load settings on startup
@@ -295,11 +314,33 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         while True:
-            # Keep connection alive and handle client messages
-            data = await websocket.receive_text()
-            # Echo back for testing
-            await websocket.send_text(f"Message received: {data}")
+            # Handle client messages
+            try:
+                data = await websocket.receive_text()
+                try:
+                    message = json.loads(data)
+                    msg_type = message.get("type")
+                    
+                    if msg_type == "ping":
+                        # Respond to ping with pong
+                        await websocket.send_json({"type": "pong"})
+                    elif msg_type == "get_status":
+                        # Send current download status
+                        if queue_manager:
+                            downloads = await queue_manager.get_all_downloads()
+                            await websocket.send_json({
+                                "type": "status",
+                                "data": [d.dict() for d in downloads]
+                            })
+                    else:
+                        logger.debug(f"Unknown WebSocket message type: {msg_type}")
+                except json.JSONDecodeError:
+                    logger.warning(f"Invalid JSON in WebSocket message: {data}")
+            except Exception as e:
+                logger.error(f"Error handling WebSocket message: {e}", exc_info=True)
     except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
+    finally:
         ws_manager.disconnect(websocket)
         # Unregister callback to prevent memory leak
         if queue_manager and callback_id is not None:

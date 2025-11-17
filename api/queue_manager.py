@@ -196,8 +196,27 @@ class QueueManager:
                 else:
                     task.status = DownloadStatus.FAILED
                     task.error_message = message
+                    # Clean up partial files on failure
+                    if task.dest_path:
+                        part_path = task.dest_path.with_name(task.dest_path.name + ".part")
+                        sidecar_path = task.dest_path.with_name(task.dest_path.name + ".part.json")
+                        try:
+                            part_path.unlink(missing_ok=True)
+                            sidecar_path.unlink(missing_ok=True)
+                            logger.debug(f"Cleaned up partial files for failed download {task.id}")
+                        except Exception as e:
+                            logger.warning(f"Failed to clean up partial files for {task.id}: {e}")
 
                 self.active_downloads.discard(task.id)
+                # Clean up thread - wait for it to finish
+                if task.manager:
+                    try:
+                        if task.manager.isRunning():
+                            task.manager.wait(3000)  # Wait up to 3 seconds
+                        task.manager = None
+                    except Exception as e:
+                        logger.warning(f"Error cleaning up thread for {task.id}: {e}")
+                
                 if self._loop:
                     asyncio.run_coroutine_threadsafe(self._notify_progress(task, force=True), self._loop)
                     asyncio.run_coroutine_threadsafe(self._process_queue(), self._loop)
@@ -271,6 +290,26 @@ class QueueManager:
             task.manager.cancel()
             task.status = DownloadStatus.CANCELLED
             self.active_downloads.discard(download_id)
+            
+            # Clean up partial files on cancel
+            if task.dest_path:
+                part_path = task.dest_path.with_name(task.dest_path.name + ".part")
+                sidecar_path = task.dest_path.with_name(task.dest_path.name + ".part.json")
+                try:
+                    part_path.unlink(missing_ok=True)
+                    sidecar_path.unlink(missing_ok=True)
+                    logger.info(f"Cleaned up partial files for cancelled download {download_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up partial files for {download_id}: {e}")
+            
+            # Wait for thread to finish and clean up
+            try:
+                if task.manager.isRunning():
+                    task.manager.wait(3000)  # Wait up to 3 seconds
+                task.manager = None
+            except Exception as e:
+                logger.warning(f"Error cleaning up thread for {download_id}: {e}")
+            
             await self._notify_progress(task)
             await self._process_queue()
             return True
@@ -289,6 +328,8 @@ class QueueManager:
 
     async def cleanup_completed(self) -> int:
         """Clean up old completed/failed/cancelled downloads.
+        
+        Thread-safe: Uses queue lock to prevent race conditions with active downloads.
 
         Returns:
             Number of downloads removed
@@ -300,8 +341,13 @@ class QueueManager:
             to_remove = []
 
             for task_id, task in self.tasks.items():
-                # Only consider finished tasks
+                # Only consider finished tasks that are not active
                 if task.status not in (DownloadStatus.COMPLETED, DownloadStatus.FAILED, DownloadStatus.CANCELLED):
+                    continue
+                
+                # Double-check: ensure task is not in active_downloads (thread-safe check)
+                if task_id in self.active_downloads:
+                    logger.warning(f"Skipping cleanup of active download {task_id}")
                     continue
 
                 # Remove if completed_at timestamp is old enough
@@ -319,6 +365,7 @@ class QueueManager:
             completed_tasks = [
                 (task_id, task) for task_id, task in self.tasks.items()
                 if task.status in (DownloadStatus.COMPLETED, DownloadStatus.FAILED, DownloadStatus.CANCELLED)
+                and task_id not in self.active_downloads  # Thread-safe: exclude active
             ]
 
             if len(completed_tasks) > self.max_completed:
@@ -329,10 +376,24 @@ class QueueManager:
                     if task_id not in to_remove:
                         to_remove.append(task_id)
 
-            # Remove the tasks
+            # Remove the tasks (still holding lock, so thread-safe)
             for task_id in to_remove:
-                del self.tasks[task_id]
-                removed_count += 1
+                # Final safety check before deletion
+                if task_id not in self.active_downloads:
+                    task = self.tasks.get(task_id)
+                    if task:
+                        # Clean up thread if still exists
+                        if task.manager:
+                            try:
+                                if task.manager.isRunning():
+                                    task.manager.wait(1000)  # Wait up to 1 second
+                                task.manager = None
+                            except Exception as e:
+                                logger.warning(f"Error cleaning up thread for {task_id} during cleanup: {e}")
+                        del self.tasks[task_id]
+                        removed_count += 1
+                else:
+                    logger.warning(f"Skipping removal of active download {task_id}")
 
         if removed_count > 0:
             logger.info(f"Cleaned up {removed_count} old downloads")
@@ -340,13 +401,31 @@ class QueueManager:
         return removed_count
 
     async def _periodic_cleanup(self):
-        """Periodic cleanup task that runs every hour."""
+        """Periodic cleanup task that runs every hour with resilience."""
+        retry_count = 0
+        max_retries = 3
+        
         while True:
             try:
                 await asyncio.sleep(3600)  # Run every hour
-                await self.cleanup_completed()
+                try:
+                    cleaned = await self.cleanup_completed()
+                    if cleaned > 0:
+                        logger.info(f"Periodic cleanup removed {cleaned} old downloads")
+                    retry_count = 0  # Reset on success
+                except Exception as e:
+                    retry_count += 1
+                    logger.error(f"Error in periodic cleanup (attempt {retry_count}/{max_retries}): {e}", exc_info=True)
+                    if retry_count >= max_retries:
+                        logger.warning("Periodic cleanup failed multiple times, will retry on next cycle")
+                        retry_count = 0
+                    else:
+                        # Wait a bit before retrying
+                        await asyncio.sleep(60)
             except asyncio.CancelledError:
                 logger.info("Periodic cleanup task cancelled")
                 break
             except Exception as e:
-                logger.error(f"Error in periodic cleanup: {e}", exc_info=True)
+                logger.error(f"Fatal error in periodic cleanup loop: {e}", exc_info=True)
+                # Wait before retrying the loop
+                await asyncio.sleep(300)  # 5 minutes
