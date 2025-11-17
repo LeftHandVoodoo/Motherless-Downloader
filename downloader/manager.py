@@ -307,66 +307,73 @@ class DownloadManager(QThread):
                             _dbg(f"seg#{seg_index} unexpected status {resp.status_code}")
                             download_failed.set()
                             raise RuntimeError(f"Segment {seg_index}: Unexpected status {resp.status_code}")
-                    # Inspect throttling hints
-                    try:
-                        cr = resp.headers.get("Content-Range")
-                        ra = resp.headers.get("Retry-After")
-                        sv = resp.headers.get("Server")
-                        _dbg(f"seg#{seg_index} headers: Content-Range={cr} Retry-After={ra} Server={sv}")
-                    except Exception:
-                        pass
-                    mode = "r+b" if part_path.exists() else "wb"
-                    with open(part_path, mode) as fp:
-                        fp.seek(range_start)
-                        seg_bytes = 0
-                        first_chunk_time = None
-                        last_log_time = time.time()
-                        last_sidecar_time = time.time()
-                        for chunk in resp.iter_bytes(chunk_size=DEFAULT_CHUNK_SIZE):
-                            # Check cancel and failure flags
-                            if self._cancel_event.is_set() or download_failed.is_set():
-                                return
-                            self._pause_event.wait()
-                            if not chunk:
-                                continue
-                            fp.write(chunk)
-                            with bytes_lock:
-                                bytes_received += len(chunk)
-                            seg_bytes += len(chunk)
-                            if first_chunk_time is None:
-                                first_chunk_time = time.time()
+                        # Inspect throttling hints
+                        try:
+                            cr = resp.headers.get("Content-Range")
+                            ra = resp.headers.get("Retry-After")
+                            sv = resp.headers.get("Server")
+                            _dbg(f"seg#{seg_index} headers: Content-Range={cr} Retry-After={ra} Server={sv}")
+                        except Exception:
+                            pass
+                        mode = "r+b" if part_path.exists() else "wb"
+                        with open(part_path, mode) as fp:
+                            fp.seek(range_start)
+                            seg_bytes = 0
+                            first_chunk_time = None
+                            last_log_time = time.time()
+                            last_sidecar_time = time.time()
+                            last_progress_time = 0.0  # Throttle progress emissions
+                            for chunk in resp.iter_bytes(chunk_size=DEFAULT_CHUNK_SIZE):
+                                # Check cancel and failure flags
+                                if self._cancel_event.is_set() or download_failed.is_set():
+                                    return
+                                self._pause_event.wait()
+                                if not chunk:
+                                    continue
+                                fp.write(chunk)
+                                with bytes_lock:
+                                    bytes_received += len(chunk)
+                                seg_bytes += len(chunk)
+                                if first_chunk_time is None:
+                                    first_chunk_time = time.time()
 
-                            now = time.time()
-                            # Throttle sidecar writes to every 2 seconds to reduce I/O
-                            if now - last_sidecar_time >= 2.0:
-                                state = make_sidecar_for_url(final_path, req.url, total_size, bytes_received)
-                                # Serialize sidecar writes to avoid Windows rename contention
-                                try:
-                                    with self._sidecar_lock:
-                                        save_sidecar_atomic(sidecar_path, state)
-                                    last_sidecar_time = now
-                                except PermissionError:
-                                    # Best-effort: skip this update; try again on next chunk
-                                    _dbg("sidecar save skipped due to PermissionError (Windows contention)")
+                                now = time.time()
+                                # Throttle sidecar writes to every 2 seconds to reduce I/O
+                                if now - last_sidecar_time >= 2.0:
+                                    state = make_sidecar_for_url(final_path, req.url, total_size, bytes_received)
+                                    # Serialize sidecar writes to avoid Windows rename contention
+                                    try:
+                                        with self._sidecar_lock:
+                                            save_sidecar_atomic(sidecar_path, state)
+                                        last_sidecar_time = now
+                                    except PermissionError:
+                                        # Best-effort: skip this update; try again on next chunk
+                                        _dbg("sidecar save skipped due to PermissionError (Windows contention)")
 
-                            # Thread-safe speed tracking
-                            with window_lock:
-                                window.append((now, bytes_received))
-                                window[:] = [w for w in window if now - w[0] <= 3.0]
-                                if len(window) >= 2:
-                                    dt = window[-1][0] - window[0][0]
-                                    ds = window[-1][1] - window[0][1]
-                                    if dt > 0:
-                                        self.speed.emit(ds / dt)
+                                # Thread-safe speed tracking
+                                with window_lock:
+                                    window.append((now, bytes_received))
+                                    window[:] = [w for w in window if now - w[0] <= 3.0]
+                                    if len(window) >= 2:
+                                        dt = window[-1][0] - window[0][0]
+                                        ds = window[-1][1] - window[0][1]
+                                        if dt > 0:
+                                            self.speed.emit(ds / dt)
 
-                            # periodic per-seg throughput debug
-                            if now - last_log_time >= 2.0 and first_chunk_time is not None:
-                                dur = now - first_chunk_time
-                                bps = seg_bytes / max(dur, 1e-6)
-                                _dbg(f"seg#{seg_index} avg {bps/1024:.1f} KB/s over {dur:.1f}s")
-                                last_log_time = now
-                            self.progress.emit(bytes_received, total_size)
-                        _dbg(f"seg#{seg_index} finished, downloaded {seg_bytes} bytes")
+                                # periodic per-seg throughput debug
+                                if now - last_log_time >= 2.0 and first_chunk_time is not None:
+                                    dur = now - first_chunk_time
+                                    bps = seg_bytes / max(dur, 1e-6)
+                                    _dbg(f"seg#{seg_index} avg {bps/1024:.1f} KB/s over {dur:.1f}s")
+                                    last_log_time = now
+                                
+                                # Throttle progress emissions to ~10 times per second per segment
+                                # With multiple segments, total emission rate is still reasonable
+                                if now - last_progress_time >= 0.1:
+                                    print(f"[DL] Emitting progress: {bytes_received}/{total_size}")
+                                    self.progress.emit(bytes_received, total_size)
+                                    last_progress_time = now
+                            _dbg(f"seg#{seg_index} finished, downloaded {seg_bytes} bytes")
             except Exception as e:
                 download_failed.set()
                 _dbg(f"seg#{seg_index} failed: {e}")
@@ -433,6 +440,10 @@ class DownloadManager(QThread):
             self.finished.emit(False, f"Download incomplete: {bytes_received}/{total_size} bytes received. Resume data saved.")
             return
 
+        # Emit final progress to ensure 100% is shown
+        print(f"[DL] Emitting final progress: {total_size}/{total_size}")
+        self.progress.emit(total_size, total_size)
+        
         # Move to final file atomically
         final_path.parent.mkdir(parents=True, exist_ok=True)
         part_path.replace(final_path)

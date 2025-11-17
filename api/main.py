@@ -1,6 +1,8 @@
 """FastAPI application for Motherless Downloader."""
 from __future__ import annotations
 
+import asyncio
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List
@@ -8,8 +10,7 @@ from typing import List
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from platformdirs import user_downloads_dir
-import json
+from platformdirs import user_downloads_dir, user_config_dir
 
 from .models import (
     DownloadRequest,
@@ -29,6 +30,8 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     global queue_manager
     queue_manager = QueueManager(max_concurrent=3)
+    # Set the event loop for thread-safe async scheduling
+    queue_manager.set_event_loop(asyncio.get_running_loop())
     yield
     # Cleanup on shutdown
     queue_manager = None
@@ -50,12 +53,37 @@ app.add_middleware(
 )
 
 
-# Settings storage (simple in-memory for now)
-_settings = Settings(
-    download_dir=user_downloads_dir(),
-    default_connections=4,
-    adaptive_default=True,
-)
+# Settings file path
+_settings_file = Path(user_config_dir("motherless-downloader")) / "settings.json"
+
+
+def load_settings() -> Settings:
+    """Load settings from file or return defaults."""
+    if _settings_file.exists():
+        try:
+            with open(_settings_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return Settings(**data)
+        except Exception:
+            pass
+    
+    # Default settings
+    return Settings(
+        download_dir=user_downloads_dir(),
+        default_connections=4,
+        adaptive_default=True,
+    )
+
+
+def save_settings(settings: Settings) -> None:
+    """Save settings to file."""
+    _settings_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(_settings_file, "w", encoding="utf-8") as f:
+        json.dump(settings.dict(), f, indent=2)
+
+
+# Load settings on startup
+_settings = load_settings()
 
 
 # WebSocket connection manager
@@ -81,8 +109,8 @@ class ConnectionManager:
 ws_manager = ConnectionManager()
 
 
-@app.get("/")
-async def root():
+@app.get("/api/health")
+async def health():
     """Health check endpoint."""
     return {"status": "ok", "version": "0.2.0"}
 
@@ -178,17 +206,51 @@ async def get_settings():
     return _settings
 
 
+@app.post("/api/settings/validate-dir")
+async def validate_directory(data: dict):
+    """Validate that a directory path exists and is accessible."""
+    path = data.get("path", "")
+    if not path:
+        return {"valid": False, "error": "No path provided"}
+    
+    try:
+        dir_path = Path(path)
+        if not dir_path.exists():
+            return {"valid": False, "error": "Directory does not exist"}
+        if not dir_path.is_dir():
+            return {"valid": False, "error": "Path is not a directory"}
+        # Check if we can write to it
+        try:
+            test_file = dir_path / ".test_write"
+            test_file.touch()
+            test_file.unlink()
+            return {"valid": True, "path": str(dir_path.resolve())}
+        except PermissionError:
+            return {"valid": False, "error": "No write permission to directory"}
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
+
 @app.patch("/api/settings", response_model=Settings)
 async def update_settings(update: SettingsUpdate):
     """Update application settings."""
     global _settings
 
     if update.download_dir is not None:
-        _settings.download_dir = update.download_dir
+        # Validate the directory path
+        dir_path = Path(update.download_dir)
+        if not dir_path.exists():
+            raise HTTPException(400, f"Directory does not exist: {update.download_dir}")
+        if not dir_path.is_dir():
+            raise HTTPException(400, f"Path is not a directory: {update.download_dir}")
+        _settings.download_dir = str(dir_path.resolve())
     if update.default_connections is not None:
         _settings.default_connections = update.default_connections
     if update.adaptive_default is not None:
         _settings.adaptive_default = update.adaptive_default
+
+    # Persist settings to file
+    save_settings(_settings)
 
     return _settings
 
@@ -200,13 +262,17 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # Register progress callback
     async def progress_callback(download_info: DownloadInfo):
+        print(f"[DEBUG] Broadcasting progress via WebSocket: {download_info.id}")
         await ws_manager.broadcast({
             "type": "progress",
             "data": download_info.dict()
         })
 
     if queue_manager:
+        print(f"[DEBUG] Registering progress callback for WebSocket")
         queue_manager.register_progress_callback(progress_callback)
+    else:
+        print(f"[DEBUG] Queue manager not available!")
 
     try:
         while True:
@@ -219,7 +285,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 # Serve frontend static files in production (after building)
-# Uncomment when frontend is built
-# frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
-# if frontend_dist.exists():
-#     app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="static")
+frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+if frontend_dist.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="static")

@@ -69,6 +69,11 @@ class QueueManager:
         self.active_downloads: set[str] = set()
         self.progress_callbacks: list[Callable] = []
         self._queue_lock = asyncio.Lock()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        
+    def set_event_loop(self, loop: asyncio.AbstractEventLoop):
+        """Set the asyncio event loop for thread-safe task scheduling."""
+        self._loop = loop
 
     def register_progress_callback(self, callback: Callable):
         """Register a callback for progress updates."""
@@ -132,14 +137,19 @@ class QueueManager:
         def on_progress(received: int, total: int):
             task.received_bytes = received
             task.total_bytes = total
-            # Schedule async notification
-            asyncio.create_task(self._notify_progress(task))
+            # Schedule async notification from Qt thread
+            if self._loop:
+                asyncio.run_coroutine_threadsafe(self._notify_progress(task), self._loop)
+            else:
+                print(f"[DEBUG] No event loop available for progress update")
 
         def on_speed(bps: float):
             task.speed_bps = bps
-            asyncio.create_task(self._notify_progress(task))
+            if self._loop:
+                asyncio.run_coroutine_threadsafe(self._notify_progress(task), self._loop)
 
         def on_finished(success: bool, message: str):
+            print(f"[DEBUG] Download finished: success={success}, message={message}")
             if success:
                 task.status = DownloadStatus.COMPLETED
                 task.completed_at = datetime.utcnow().isoformat()
@@ -148,23 +158,30 @@ class QueueManager:
                 task.error_message = message
 
             self.active_downloads.discard(task.id)
-            asyncio.create_task(self._notify_progress(task))
-            asyncio.create_task(self._process_queue())
+            if self._loop:
+                asyncio.run_coroutine_threadsafe(self._notify_progress(task), self._loop)
+                asyncio.run_coroutine_threadsafe(self._process_queue(), self._loop)
+            else:
+                print(f"[DEBUG] No event loop available for finished notification")
 
-        manager.progress.connect(on_progress)
-        manager.speed.connect(on_speed)
-        manager.finished.connect(on_finished)
+        # Use Qt.DirectConnection to ensure callbacks fire immediately from worker thread
+        from PySide6.QtCore import Qt
+        manager.progress.connect(on_progress, Qt.ConnectionType.DirectConnection)
+        manager.speed.connect(on_speed, Qt.ConnectionType.DirectConnection)
+        manager.finished.connect(on_finished, Qt.ConnectionType.DirectConnection)
+        print(f"[DEBUG] Connected signals for task {task.id}")
 
         # Start download in thread
         manager.start()
 
     async def _notify_progress(self, task: DownloadTask):
         """Notify all registered callbacks of progress."""
+        print(f"[DEBUG] Notifying progress: {task.id} - {task.received_bytes}/{task.total_bytes} - status={task.status}")
         for callback in self.progress_callbacks:
             try:
                 await callback(task.to_info())
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[DEBUG] Error in progress callback: {e}")
 
     def get_download(self, download_id: str) -> Optional[DownloadInfo]:
         """Get download info by ID."""

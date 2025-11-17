@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { Download, Pause, Play, X, Trash2, Settings } from 'lucide-react';
-import { downloadsApi, type DownloadInfo, DownloadStatus, type DownloadRequest } from './lib/api';
+import { downloadsApi, settingsApi, type DownloadInfo, DownloadStatus, type DownloadRequest } from './lib/api';
 import { formatBytes, formatSpeed, calculateETA, cn } from './lib/utils';
 import { Button } from './components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card';
@@ -10,7 +10,8 @@ function App() {
   const [downloads, setDownloads] = useState<DownloadInfo[]>([]);
   const [url, setUrl] = useState('');
   const [connections, setConnections] = useState(4);
-  const [ws, setWs] = useState<WebSocket | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [downloadDir, setDownloadDir] = useState('');
 
   // WebSocket connection
   useEffect(() => {
@@ -39,16 +40,15 @@ function App() {
       console.error('WebSocket error:', error);
     };
 
-    setWs(websocket);
-
     return () => {
       websocket.close();
     };
   }, []);
 
-  // Fetch downloads on mount
+  // Fetch downloads and settings on mount
   useEffect(() => {
     fetchDownloads();
+    fetchSettings();
   }, []);
 
   const fetchDownloads = async () => {
@@ -57,6 +57,101 @@ function App() {
       setDownloads(response.data);
     } catch (error) {
       console.error('Failed to fetch downloads:', error);
+    }
+  };
+
+  const fetchSettings = async () => {
+    try {
+      const response = await settingsApi.get();
+      setDownloadDir(response.data.download_dir || '');
+      setConnections(response.data.default_connections || 4);
+    } catch (error) {
+      console.error('Failed to fetch settings:', error);
+    }
+  };
+
+  const handleBrowseDirectory = async () => {
+    // Use File System Access API if available (Chrome/Edge)
+    if ('showDirectoryPicker' in window) {
+      try {
+        const dirHandle = await (window as any).showDirectoryPicker();
+        const dirName = dirHandle.name;
+        
+        // Try to get the path - File System Access API has limitations
+        // We can request permission and use the directory handle
+        // For now, prompt user to enter the full path
+        const userPath = prompt(
+          `Selected directory: ${dirName}\n\nPlease enter the full path to this directory:\n(e.g., C:\\Users\\YourName\\Downloads)`,
+          downloadDir || ''
+        );
+        
+        if (userPath && userPath.trim()) {
+          // Validate the path with the backend
+          try {
+            const response = await fetch('/api/settings/validate-dir', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ path: userPath.trim() }),
+            });
+            const result = await response.json();
+            
+            if (result.valid) {
+              setDownloadDir(result.path);
+            } else {
+              alert(`Invalid directory: ${result.error}`);
+            }
+          } catch (error) {
+            console.error('Failed to validate directory:', error);
+            // Still set it, let the save operation validate
+            setDownloadDir(userPath.trim());
+          }
+        }
+      } catch (error: any) {
+        if (error.name !== 'AbortError') {
+          console.error('Failed to browse directory:', error);
+          alert('Failed to open directory picker. Please enter the path manually.');
+        }
+      }
+    } else {
+      // Fallback: Prompt for path
+      const userPath = prompt(
+        'Enter the full path to the download directory:\n(e.g., C:\\Users\\YourName\\Downloads)',
+        downloadDir || ''
+      );
+      if (userPath && userPath.trim()) {
+        // Validate the path
+        try {
+          const response = await fetch('/api/settings/validate-dir', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: userPath.trim() }),
+          });
+          const result = await response.json();
+          
+          if (result.valid) {
+            setDownloadDir(result.path);
+          } else {
+            alert(`Invalid directory: ${result.error}`);
+          }
+        } catch (error) {
+          console.error('Failed to validate directory:', error);
+          setDownloadDir(userPath.trim());
+        }
+      }
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    try {
+      await settingsApi.update({
+        download_dir: downloadDir,
+        default_connections: connections,
+        adaptive_default: true,
+      });
+      setShowSettings(false);
+    } catch (error) {
+      console.error('Failed to save settings:', error);
+      alert('Failed to save settings');
     }
   };
 
@@ -114,27 +209,91 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-6">
-      <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-4xl font-bold text-white mb-2">
-              Motherless Downloader
-            </h1>
-            <p className="text-slate-300">
-              Multi-threaded download manager with queue support
-            </p>
-          </div>
-          <Button variant="outline" size="icon" className="bg-white/10 hover:bg-white/20 border-white/20 text-white">
-            <Settings className="w-5 h-5" />
-          </Button>
-        </div>
+    <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-gray-900 to-zinc-950">
+      {/* Banner Header */}
+      <div className="w-full bg-zinc-900/50 border-b border-zinc-800 mb-6 relative">
+        <img 
+          src="/banner.png" 
+          alt="Motherless Downloader" 
+          className="w-full h-auto max-h-32 object-contain px-6 py-3"
+        />
+        <Button 
+          variant="outline" 
+          size="icon" 
+          className="absolute top-4 right-6 bg-zinc-800/80 hover:bg-zinc-700/80 border-zinc-700 text-gray-300 hover:text-white"
+          onClick={() => setShowSettings(!showSettings)}
+        >
+          <Settings className="w-5 h-5" />
+        </Button>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-6 space-y-6">
+
+        {/* Settings Panel */}
+        {showSettings && (
+          <Card className="bg-zinc-900/90 backdrop-blur-sm border-zinc-700">
+            <CardHeader>
+              <CardTitle className="text-gray-100">Settings</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Download Directory
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={downloadDir}
+                    onChange={(e) => setDownloadDir(e.target.value)}
+                    className="flex-1 px-4 py-2 bg-zinc-800 border border-zinc-600 rounded-lg text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-zinc-500"
+                    placeholder="e.g., C:\Downloads"
+                  />
+                  <Button
+                    type="button"
+                    onClick={handleBrowseDirectory}
+                    variant="outline"
+                    className="bg-zinc-800 hover:bg-zinc-700 border-zinc-600 text-gray-300 whitespace-nowrap"
+                  >
+                    Browse
+                  </Button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Default Connections: {connections}
+                </label>
+                <input
+                  type="range"
+                  min="1"
+                  max="30"
+                  value={connections}
+                  onChange={(e) => setConnections(parseInt(e.target.value))}
+                  className="w-full accent-zinc-500"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleSaveSettings}
+                  className="bg-zinc-700 hover:bg-zinc-600 text-white"
+                >
+                  Save Settings
+                </Button>
+                <Button
+                  onClick={() => setShowSettings(false)}
+                  variant="outline"
+                  className="bg-zinc-800 hover:bg-zinc-700 border-zinc-600 text-gray-300"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Add Download Card */}
-        <Card className="bg-white/10 backdrop-blur-lg border-white/20">
+        <Card className="bg-zinc-900/90 backdrop-blur-sm border-zinc-700">
           <CardHeader>
-            <CardTitle className="text-white">Add New Download</CardTitle>
+            <CardTitle className="text-gray-100">Add New Download</CardTitle>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleAddDownload} className="space-y-4">
@@ -144,7 +303,7 @@ function App() {
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   placeholder="Paste Motherless URL here..."
-                  className="flex-1 px-4 py-2 rounded-md bg-white/10 border border-white/20 text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="flex-1 px-4 py-2 rounded-md bg-zinc-800 border border-zinc-600 text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-zinc-500"
                 />
                 <input
                   type="number"
@@ -152,10 +311,10 @@ function App() {
                   onChange={(e) => setConnections(parseInt(e.target.value))}
                   min="1"
                   max="30"
-                  className="w-24 px-4 py-2 rounded-md bg-white/10 border border-white/20 text-white text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-24 px-4 py-2 rounded-md bg-zinc-800 border border-zinc-600 text-gray-100 text-center focus:outline-none focus:ring-2 focus:ring-zinc-500"
                   title="Connections"
                 />
-                <Button type="submit" className="bg-blue-600 hover:bg-blue-700">
+                <Button type="submit" className="bg-zinc-700 hover:bg-zinc-600">
                   <Download className="w-4 h-4 mr-2" />
                   Add
                 </Button>
@@ -165,15 +324,15 @@ function App() {
         </Card>
 
         {/* Downloads Queue */}
-        <Card className="bg-white/10 backdrop-blur-lg border-white/20">
+        <Card className="bg-zinc-900/90 backdrop-blur-sm border-zinc-700">
           <CardHeader>
-            <CardTitle className="text-white">
+            <CardTitle className="text-gray-100">
               Download Queue ({downloads.length})
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {downloads.length === 0 ? (
-              <div className="text-center py-12 text-slate-400">
+              <div className="text-center py-12 text-gray-500">
                 No downloads yet. Add a URL above to get started.
               </div>
             ) : (
@@ -192,8 +351,8 @@ function App() {
         </Card>
 
         {/* Footer */}
-        <div className="text-center text-slate-400 text-sm">
-          <p>Version 0.2.0 • Modern FastAPI + React Interface</p>
+        <div className="text-center text-gray-500 text-sm pb-6">
+          <p>Version 0.2.1 • Modern FastAPI + React Interface</p>
         </div>
       </div>
     </div>
@@ -225,20 +384,20 @@ function DownloadItem({ download, onPause, onResume, onCancel, onRemove }: Downl
   }[download.status];
 
   return (
-    <div className="bg-white/5 rounded-lg p-4 space-y-3">
+    <div className="bg-zinc-800/60 rounded-lg p-4 space-y-3 border border-zinc-700/50">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <div className={cn("w-2 h-2 rounded-full", statusColor)} />
-            <span className="text-sm font-medium text-white capitalize">
+            <span className="text-sm font-medium text-gray-200 capitalize">
               {download.status}
             </span>
           </div>
-          <p className="text-white text-sm font-medium truncate">
+          <p className="text-gray-100 text-sm font-medium truncate">
             {download.filename || new URL(download.url).pathname.split('/').pop()}
           </p>
-          <p className="text-slate-400 text-xs truncate">
+          <p className="text-gray-500 text-xs truncate">
             {download.url}
           </p>
         </div>
@@ -250,7 +409,7 @@ function DownloadItem({ download, onPause, onResume, onCancel, onRemove }: Downl
               size="icon"
               variant="ghost"
               onClick={() => onPause(download.id)}
-              className="h-8 w-8 text-white hover:bg-white/10"
+              className="h-8 w-8 text-gray-300 hover:bg-zinc-700 hover:text-white"
             >
               <Pause className="w-4 h-4" />
             </Button>
@@ -260,7 +419,7 @@ function DownloadItem({ download, onPause, onResume, onCancel, onRemove }: Downl
               size="icon"
               variant="ghost"
               onClick={() => onResume(download.id)}
-              className="h-8 w-8 text-white hover:bg-white/10"
+              className="h-8 w-8 text-gray-300 hover:bg-zinc-700 hover:text-white"
             >
               <Play className="w-4 h-4" />
             </Button>
@@ -270,7 +429,7 @@ function DownloadItem({ download, onPause, onResume, onCancel, onRemove }: Downl
               size="icon"
               variant="ghost"
               onClick={() => onCancel(download.id)}
-              className="h-8 w-8 text-white hover:bg-white/10"
+              className="h-8 w-8 text-gray-300 hover:bg-zinc-700 hover:text-white"
             >
               <X className="w-4 h-4" />
             </Button>
@@ -292,7 +451,7 @@ function DownloadItem({ download, onPause, onResume, onCancel, onRemove }: Downl
 
       {/* Progress Bar */}
       <div className="space-y-2">
-        <div className="w-full bg-white/10 rounded-full h-2">
+        <div className="w-full bg-zinc-700/50 rounded-full h-2">
           <div
             className={cn("h-2 rounded-full transition-all duration-300", statusColor)}
             style={{ width: `${progress}%` }}
@@ -300,7 +459,7 @@ function DownloadItem({ download, onPause, onResume, onCancel, onRemove }: Downl
         </div>
 
         {/* Stats */}
-        <div className="flex items-center justify-between text-xs text-slate-300">
+        <div className="flex items-center justify-between text-xs text-gray-400">
           <span>
             {formatBytes(download.received_bytes)} / {formatBytes(download.total_bytes)}
           </span>
@@ -317,7 +476,7 @@ function DownloadItem({ download, onPause, onResume, onCancel, onRemove }: Downl
 
       {/* Error Message */}
       {download.error_message && (
-        <div className="text-red-400 text-xs bg-red-500/10 px-3 py-2 rounded">
+        <div className="text-red-400 text-xs bg-red-900/30 px-3 py-2 rounded border border-red-800/50">
           {download.error_message}
         </div>
       )}
