@@ -74,3 +74,58 @@
 - ✅ **RELIABILITY: BETTER EXCEPTION HANDLING**: Added try-except blocks around filesystem operations with specific PermissionError vs general Exception handling.
 - ✅ **TESTS: ALL PASSING**: Verified all 13 unit tests pass after changes (URL validation, header parsing, segments, state management, discovery).
 
+## Version 0.2.0 - Major UI Revamp: Modern Web Interface
+
+### 🎨 New Web Interface (FastAPI + React + TypeScript)
+- ✅ **FASTAPI BACKEND**: Complete REST API with FastAPI, providing endpoints for download management, settings, and queue operations.
+- ✅ **WEBSOCKET REAL-TIME UPDATES**: WebSocket integration for live progress updates; eliminates polling, provides instant status changes.
+- ✅ **MULTI-DOWNLOAD QUEUE**: QueueManager system supporting concurrent downloads with configurable max concurrency (default: 3 simultaneous downloads).
+- ✅ **REACT + TYPESCRIPT FRONTEND**: Modern React 18 application with TypeScript for type safety and better developer experience.
+- ✅ **SHADCN/UI COMPONENTS**: Beautiful, accessible components from shadcn/ui with Radix UI primitives.
+- ✅ **TAILWIND CSS STYLING**: Utility-first CSS framework for rapid UI development with custom color scheme and dark mode support.
+- ✅ **GLASSMORPHISM DESIGN**: Modern aesthetic with backdrop blur effects, gradient backgrounds, and smooth animations.
+- ✅ **RESPONSIVE LAYOUT**: Mobile-first design that works seamlessly on desktop, tablet, and mobile devices.
+- ✅ **STATUS INDICATORS**: Visual feedback with color-coded status badges (queued=yellow, downloading=blue, paused=orange, completed=green, failed=red, cancelled=gray).
+- ✅ **PROGRESS VISUALIZATION**: Real-time progress bars with percentage, speed (KB/s, MB/s), ETA calculation, and bytes transferred display.
+- ✅ **DOWNLOAD ACTIONS**: Pause, resume, cancel, and remove actions with intuitive icon buttons per download.
+- ✅ **QUEUE MANAGEMENT**: Add multiple downloads simultaneously; automatic queue processing up to concurrency limit.
+
+### 🏗️ Architecture Improvements
+- ✅ **API/MODELS SEPARATION**: Clean Pydantic models for request/response validation (DownloadRequest, DownloadInfo, Settings, etc.).
+- ✅ **DOWNLOAD TASK ABSTRACTION**: DownloadTask class wrapping DownloadManager with queue-friendly interface.
+- ✅ **ASYNC QUEUE PROCESSING**: Asynchronous queue manager with proper locking and concurrent task management.
+- ✅ **PROGRESS CALLBACKS**: Callback system for broadcasting updates to all connected WebSocket clients.
+- ✅ **REST API ENDPOINTS**: Full CRUD operations on downloads plus pause/resume/cancel/remove actions.
+- ✅ **CORS MIDDLEWARE**: Configured for development with Vite dev server support.
+- ✅ **API DOCUMENTATION**: Auto-generated Swagger UI and ReDoc documentation at /docs and /redoc.
+
+### 🛠️ Frontend Stack
+- ✅ **VITE BUILD TOOL**: Lightning-fast HMR and optimized production builds.
+- ✅ **TYPESCRIPT**: Full type safety across components, API client, and utilities.
+- ✅ **AXIOS HTTP CLIENT**: Type-safe API communication with axios.
+- ✅ **LUCIDE REACT ICONS**: Beautiful, consistent icon set (Download, Pause, Play, X, Trash2, Settings).
+- ✅ **FORMATTING UTILITIES**: Helper functions for bytes, speed, duration, and ETA formatting.
+- ✅ **CN UTILITY**: clsx + tailwind-merge for conditional className composition.
+
+### 📦 Build & Deployment
+- ✅ **PRODUCTION BUILD**: Optimized Vite build with code splitting and minification.
+- ✅ **STATIC SERVING**: FastAPI configured to serve built frontend from /frontend/dist.
+- ✅ **STARTUP SCRIPT**: Simple run.py script to launch backend server with uvicorn.
+- ✅ **DEVELOPMENT MODE**: Dual-server setup (backend on :8000, frontend dev on :5173) with proxy configuration.
+
+### 📚 Documentation
+- ✅ **UPDATED README**: Comprehensive guide covering both web and legacy interfaces with quick start instructions.
+- ✅ **API DOCUMENTATION**: Detailed endpoint descriptions and WebSocket protocol documentation.
+- ✅ **PROJECT STRUCTURE**: Clear explanation of new api/ and frontend/ directories.
+- ✅ **TROUBLESHOOTING**: Expanded troubleshooting section for web-specific issues.
+
+### 🔄 Backend Changes
+- ✅ **REQUIREMENTS UPDATED**: Added FastAPI, uvicorn, pydantic, websockets to requirements.txt.
+- ✅ **LEGACY GUI PRESERVED**: Original PySide6 interface (main.py) remains functional for users who prefer desktop app.
+- ✅ **SHARED DOWNLOAD ENGINE**: Both interfaces use the same robust downloader/ package ensuring consistent behavior.
+
+### 🎯 Future-Ready
+- ✅ **ELECTRON PACKAGING READY**: Structure prepared for Electron/Tauri desktop app packaging.
+- ✅ **EXTENSIBLE API**: Easy to add new endpoints, features, or integrations.
+- ✅ **MODERN STACK**: Using latest stable versions of all frameworks and libraries.
+

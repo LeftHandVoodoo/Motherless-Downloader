@@ -1,46 +1,102 @@
-# Motherless Single Downloader
+# Motherless Downloader
 
-A PySide6-based GUI application for downloading media files from Motherless with support for multi-connection downloads, pause/resume, and adaptive connection management.
+A modern download manager for Motherless media files with two interface options:
+- **Web Interface** (NEW in v0.2.0): FastAPI + React with real-time WebSocket updates, multi-download queue
+- **Desktop GUI** (Legacy): PySide6-based traditional desktop application
+
+Both interfaces share the same robust download engine with multi-connection support, pause/resume, and adaptive connection management.
 
 ## Features
 
-- **Modern GUI**: Clean, dark-themed interface built with PySide6
-- **Multi-Connection Downloads**: Download files using up to 30 parallel connections for faster speeds
-- **Adaptive Connection Management**: Automatically adjusts connection count based on server throughput hints
-- **Pause/Resume**: Support for pausing and resuming downloads (when server supports range requests)
-- **Automatic Filename Detection**: Extracts filenames from server headers or page titles
-- **URL Validation**: Validates Motherless URLs before starting downloads
-- **Progress Tracking**: Real-time progress bar, speed display (Mb/s), and connection status
-- **Resume Support**: Automatically resumes interrupted downloads using sidecar state files
-- **Media Discovery**: Automatically discovers direct media URLs from Motherless page URLs
+### Core Download Engine
+- **Multi-Connection Downloads**: Up to 30 parallel connections for maximum speed
+- **Adaptive Connection Management**: Auto-adjusts connections based on server throughput
+- **Pause/Resume**: Full pause/resume support with persistent state
+- **Automatic Filename Detection**: Smart extraction from headers or page titles
+- **URL Validation**: Strict HTTPS and domain validation
+- **Media Discovery**: Auto-discovers direct media URLs from page URLs
+- **Cross-Platform**: Windows, Linux, macOS support
+
+### Web Interface (NEW v0.2.0)
+- **Modern React UI**: Beautiful glassmorphism design with dark theme
+- **Download Queue**: Manage multiple downloads simultaneously
+- **Real-Time Updates**: WebSocket-based live progress tracking
+- **REST API**: Full programmatic control via REST endpoints
+- **Responsive Design**: Works on desktop, tablet, and mobile
+- **Status Indicators**: Visual feedback for queued, downloading, paused, completed states
+
+### Desktop GUI (Legacy)
+- **PySide6 Interface**: Traditional Qt-based desktop application
+- **Single Download**: Focus on one download at a time
+- **Simple Controls**: Easy-to-use buttons for pause/resume/cancel
 
 ## Requirements
 
-- Python 3.12+ (Python 3.12 recommended for PySide6 compatibility)
-- PySide6 6.7.0
+### Backend (Both Interfaces)
+- Python 3.12+ recommended
 - httpx 0.27.0 (with HTTP/2 support)
 - beautifulsoup4 4.12.3
 - platformdirs 4.2.2
+- FastAPI 0.109.0 (for web interface)
+- uvicorn 0.27.0 (for web interface)
 
-## Installation
+### Frontend (Web Interface Only)
+- Node.js 18+ (for development)
+- npm or yarn
 
-1. Clone or download this repository
-2. Create a virtual environment (recommended):
+### Legacy GUI Only
+- PySide6 6.7.0
+
+## Quick Start
+
+### Option 1: Web Interface (Recommended)
+
+1. **Clone and install Python dependencies:**
    ```bash
+   git clone <repository-url>
+   cd Motherless-Downloader
    python -m venv .venv
-   ```
-3. Activate the virtual environment:
-   - Windows: `.venv\Scripts\activate`
-   - Linux/Mac: `source .venv/bin/activate`
-4. Install dependencies:
-   ```bash
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    pip install -r requirements.txt
    ```
 
-## Usage
-
-1. Run the application:
+2. **Install and build frontend:**
    ```bash
+   cd frontend
+   npm install
+   npm run build
+   cd ..
+   ```
+
+3. **Start the server:**
+   ```bash
+   python run.py
+   ```
+
+4. **Open browser:** Navigate to `http://localhost:8000`
+
+### Option 2: Development Mode (Frontend + Backend)
+
+1. **Terminal 1 - Start backend:**
+   ```bash
+   python run.py
+   ```
+
+2. **Terminal 2 - Start frontend dev server:**
+   ```bash
+   cd frontend
+   npm run dev
+   ```
+
+3. **Open browser:** Navigate to `http://localhost:5173`
+
+### Option 3: Legacy Desktop GUI
+
+1. **Install and run:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   pip install -r requirements.txt
    python main.py
    ```
 
@@ -77,34 +133,66 @@ A PySide6-based GUI application for downloading media files from Motherless with
 
 ```
 .
-├── main.py                 # GUI entry point (PySide6)
-├── downloader/             # Core download engine
-│   ├── __init__.py        # Package exports
-│   ├── manager.py         # DownloadManager (QThread-based)
-│   ├── utils.py           # URL validation, header parsing
-│   ├── discover.py        # Media URL and title discovery
-│   ├── segments.py        # Download segmentation logic
-│   └── state.py           # Sidecar state management
-├── tests/                 # Test suite
-├── tools/                 # Utility scripts
-│   └── probe_motherless.py
-├── requirements.txt       # Python dependencies
-├── changelog.md          # Change history
+├── api/                   # FastAPI backend (NEW)
+│   ├── main.py           # FastAPI app with REST & WebSocket
+│   ├── queue_manager.py  # Multi-download queue manager
+│   └── models.py         # Pydantic models
+├── downloader/           # Core download engine
+│   ├── manager.py        # DownloadManager (thread-based)
+│   ├── utils.py          # URL validation, header parsing
+│   ├── discover.py       # Media URL discovery
+│   ├── segments.py       # Download segmentation
+│   └── state.py          # Resume state management
+├── frontend/             # React web interface (NEW)
+│   ├── src/              # React components
+│   ├── package.json      # Node.js dependencies
+│   └── vite.config.ts    # Vite configuration
+├── main.py               # Legacy PySide6 GUI entry point
+├── run.py                # Web interface startup script
+├── tests/                # Test suite
+├── requirements.txt      # Python dependencies
 └── README.md             # This file
 ```
 
+## API Documentation
+
+When running the web interface, full API documentation is available at:
+- **Interactive API docs (Swagger)**: http://localhost:8000/docs
+- **ReDoc documentation**: http://localhost:8000/redoc
+
+### Key Endpoints
+- `GET /api/downloads` - List all downloads
+- `POST /api/downloads` - Add new download
+- `POST /api/downloads/{id}/pause` - Pause download
+- `POST /api/downloads/{id}/resume` - Resume download
+- `POST /api/downloads/{id}/cancel` - Cancel download
+- `DELETE /api/downloads/{id}` - Remove from queue
+- `WS /ws` - WebSocket for real-time updates
+
 ## Configuration
 
-The application remembers your last used download directory using QSettings (Windows registry or platform-appropriate storage).
-
-Default download directory: `F:\Debrid Stage` (Windows) or user's home directory if not configured.
+Settings are managed via the API and persisted per session:
+- Download directory (defaults to user's Downloads folder)
+- Default connection count
+- Adaptive mode preference
 
 ## Troubleshooting
 
-- **PySide6 Installation Issues**: If PySide6 fails to install on Python 3.13, use Python 3.12 instead
-- **HTTP/2 Support**: The application gracefully falls back to HTTP/1.1 if HTTP/2 is not available
-- **Permission Errors**: Sidecar writes are serialized to prevent Windows permission errors
-- **Resume Not Working**: Resume only works if the server supports HTTP range requests (Accept-Ranges header)
+### General
+- **Python Version**: Use Python 3.12 for best compatibility
+- **HTTP/2 Support**: Gracefully falls back to HTTP/1.1 if unavailable
+- **Permission Errors**: Sidecar writes are throttled and locked to prevent conflicts
+- **Resume Not Working**: Requires server support for range requests
+
+### Web Interface
+- **Port Already in Use**: Stop any process using port 8000 or change port in `run.py`
+- **WebSocket Connection Failed**: Ensure backend is running and accessible
+- **CORS Errors**: Check that frontend proxy is configured correctly in `vite.config.ts`
+- **Build Errors**: Run `npm install` again, ensure Node.js 18+ is installed
+
+### Legacy GUI
+- **PySide6 Issues**: If PySide6 fails on Python 3.13, use Python 3.12 instead
+- **Qt Platform Plugin Error**: Install required system Qt libraries for your OS
 
 ## Development
 

@@ -1,4 +1,13 @@
+# GUI (legacy Qt-based interface)
 PySide6==6.7.0
+
+# Core download dependencies
 httpx[http2]==0.27.0
 platformdirs==4.2.2
 beautifulsoup4==4.12.3
+
+# API backend (new web interface)
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.6.0
+websockets==12.0
