@@ -57,3 +57,20 @@
 - ✅ **ADAPT DEFAULT ON**: Set Adapt to be enabled by default on startup.
 - ✅ **DOCUMENTATION ADDED**: Created README.md with installation, usage, and feature documentation; added VERSION file with semantic versioning (0.1.0).
 
+## Version 0.1.1 - Bug Fixes and Improvements
+
+- ✅ **CRITICAL: CANCEL THREAD SAFETY**: Fixed cancel event handling to properly stop all download threads; added download_failed event for coordinated thread shutdown; threads now check cancel/failed status in download loop.
+- ✅ **CRITICAL: SPEED WINDOW THREAD SAFETY**: Added window_lock to protect shared speed tracking window list from race conditions during concurrent thread access.
+- ✅ **CRITICAL: RESUME URL VALIDATION**: Implemented proper URL validation on resume using sidecar_matches_url; prevents downloading wrong file when URL changes between sessions; clears stale .part files when URL mismatch detected.
+- ✅ **CRITICAL: SIDECAR I/O THROTTLING**: Reduced sidecar write frequency from every chunk (~100s/sec) to every 2 seconds, dramatically reducing I/O overhead and PermissionError contention on Windows.
+- ✅ **CRITICAL: FINAL STATE PERSISTENCE**: Added final sidecar save before completion to ensure progress is always persisted on error/cancel.
+- ✅ **CODE QUALITY: DUPLICATE IMPORT REMOVED**: Removed duplicate `import re as _re` in utils.py; consolidated to single `import re`.
+- ✅ **CODE QUALITY: REGEX CLARITY**: Fixed regex capturing groups in filename extraction - replaced numeric group(3) with named groups 'utf8' and 'regular' for better maintainability.
+- ✅ **SECURITY: FILE PERMISSIONS VALIDATION**: Added comprehensive permission checks before download starts; validates directory creation and file write access with clear error messages.
+- ✅ **TYPE SAFETY: BEAUTIFULSOUP VALIDATION**: Added isinstance() checks in discover.py to handle cases where BeautifulSoup.get() returns list instead of string.
+- ✅ **CROSS-PLATFORM: REMOVED HARDCODED PATH**: Replaced Windows-specific "F:/Debrid Stage" with platformdirs.user_downloads_dir() for proper cross-platform defaults.
+- ✅ **PERFORMANCE: HTTP/2 CHECK OPTIMIZATION**: Moved HTTP/2 availability check from per-download runtime to module-level constant HTTP2_AVAILABLE; eliminates redundant imports.
+- ✅ **UX: IMPROVED ERROR MESSAGES**: Enhanced error messages throughout with specific context (e.g., "Cancelled by user", "Download incomplete: X/Y bytes received. Resume data saved.", "Permission denied: Cannot write to {path}").
+- ✅ **RELIABILITY: BETTER EXCEPTION HANDLING**: Added try-except blocks around filesystem operations with specific PermissionError vs general Exception handling.
+- ✅ **TESTS: ALL PASSING**: Verified all 13 unit tests pass after changes (URL validation, header parsing, segments, state management, discovery).
+

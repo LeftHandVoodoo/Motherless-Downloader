@@ -14,15 +14,18 @@ def discover_media_url(html_text: str) -> Optional[str]:
     soup = BeautifulSoup(html_text, "html.parser")
     # Try video > source
     source = soup.select_one("video source[src]")
-    if source and source.get("src"):
-        return source.get("src")
+    if source:
+        src = source.get("src")
+        # BeautifulSoup can return list or str; ensure we get a string
+        if isinstance(src, str) and src.strip():
+            return src.strip()
     # Fallback: look for data-src or similar
     video = soup.select_one("video")
     if video:
         for attr in ("data-src", "data-video", "src"):
             val = video.get(attr)
-            if val:
-                return val
+            if isinstance(val, str) and val.strip():
+                return val.strip()
     return None
 
 
