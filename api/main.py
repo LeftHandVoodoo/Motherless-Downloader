@@ -173,7 +173,9 @@ async def test_thumbnail(data: dict):
     logger.info(f"File exists: {path.exists()}")
     logger.info(f"File size: {path.stat().st_size if path.exists() else 0}")
     
-    result = extract_thumbnail(path)
+    # Use download directory (parent of file) for thumbnail cache
+    download_dir = path.parent
+    result = extract_thumbnail(path, download_dir=download_dir)
     
     if result:
         return {
@@ -650,6 +652,20 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 # Serve frontend static files in production (after building)
-frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+# Handle both development and frozen (PyInstaller) modes
+import sys
+
+if getattr(sys, "frozen", False):
+    # Running as frozen executable - use resource path helper
+    try:
+        from windows_install_utils import get_resource_path
+        frontend_dist = get_resource_path("frontend/dist")
+    except ImportError:
+        # Fallback if helper not available
+        frontend_dist = Path(sys._MEIPASS) / "frontend" / "dist"
+else:
+    # Running in development
+    frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+
 if frontend_dist.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="static")

@@ -216,6 +216,19 @@
 - ✅ **VISUAL FEEDBACK**: Thumbnails show cursor pointer and hover effect to indicate they're clickable.
 - ✅ **ERROR HANDLING**: Clear error messages if VLC is not found or file cannot be opened.
 
+### 🕐 Timezone Support
+- ✅ **EASTERN TIME ZONE**: All database timestamps now use Eastern Time (EST/EDT) instead of UTC.
+- ✅ **AUTOMATIC DST HANDLING**: Uses `zoneinfo` with `tzdata` package for proper daylight saving time transitions.
+- ✅ **FALLBACK SUPPORT**: Falls back to manual EST/EDT offset calculation if `tzdata` is not installed (with simple DST approximation).
+- ✅ **REQUIREMENTS UPDATE**: Added `tzdata>=2024.1` to requirements.txt for proper timezone support.
+
+### 🖼️ Thumbnail Cache Directory
+- ✅ **SEPARATE CACHE**: Thumbnails are now stored in a `.thumbnails` cache directory inside the download directory.
+- ✅ **ORGANIZED STORAGE**: Keeps thumbnails separate from video files for better organization.
+- ✅ **UNIQUE NAMING**: Thumbnails use hash-based naming (`{filename}_{hash}.jpg`) to avoid conflicts.
+- ✅ **AUTOMATIC CREATION**: Cache directory is created automatically if it doesn't exist.
+- ✅ **BACKWARD COMPATIBLE**: Falls back to legacy behavior (same directory as video) if download directory is not provided.
+
 ## Version 0.3.1 - Automatic Highest Quality Selection
 
 ### 🎯 Quality Selection
@@ -281,4 +294,15 @@
 - ✅ **THUMBNAIL DISPLAY IN HISTORY**: History items now display video thumbnails (128x80px) when available; thumbnails load via GET /api/history/{id}/thumbnail endpoint; graceful fallback if thumbnail missing or extraction failed.
 - ✅ **REDOWNLOAD FROM HISTORY**: Added POST /api/history/{id}/redownload endpoint to queue downloads from history; preserves original URL, filename, connections, and adaptive settings; automatically switches to Download Queue view after queuing.
 - ✅ **REDOWNLOAD BUTTON**: Redownload button now available for all history items (not just completed); clicking queues the download and switches to queue view; enables easy re-downloading of previously completed files.
+
+- ✅ **WINDOWS INSTALLER SYSTEM**: Created complete Windows installer build system for easy deployment on Windows 11 Pro; includes PyInstaller configuration, installer stub, and automated build script.
+- ✅ **WEB LAUNCHER**: Added `web_launcher.py` as dedicated production entrypoint that runs FastAPI server without reload mode and automatically opens browser.
+- ✅ **WINDOWS INSTALL UTILITIES**: Implemented `windows_install_utils.py` with helpers for Program Files/Desktop path resolution, Windows shortcut creation via COM/PowerShell, and frozen executable resource path handling.
+- ✅ **FROZEN ASSET RESOLUTION**: Updated `api/main.py` to correctly locate frontend/dist assets when running as PyInstaller frozen executable using sys._MEIPASS.
+- ✅ **INSTALLER EXE**: `installer_win.py` copies application to `C:\Program Files\Motherless Downloader`, creates desktop shortcut with icon, provides clear console output, and handles admin permissions gracefully.
+- ✅ **AUTOMATED BUILD SCRIPT**: `build_installer.py` automates entire build: checks frontend build status, builds main app exe with PyInstaller, then builds installer exe; includes pre-flight checks and clear success reporting.
+- ✅ **BATCH BUILD WRAPPER**: Added `build_installer.bat` for easy Windows command-line building.
+- ✅ **PYINSTALLER SPECS**: Created `motherless_app.spec` (bundles web interface) and `installer.spec` (bundles installer with main app) with correct data file inclusion, hidden imports, and icon configuration.
+- ✅ **INSTALLER TESTS**: Added `tests/test_windows_install_utils.py` with unit tests for path resolution, frozen state detection, and resource path helpers using mocks to avoid requiring actual Windows APIs.
+- ✅ **INSTALLER DOCUMENTATION**: Updated README.md with comprehensive Windows installer instructions including both usage and building from source; reorganized Quick Start section to prioritize Windows installer as Option 1.
 

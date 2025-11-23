@@ -52,6 +52,7 @@ Both interfaces share the same robust download engine with multi-connection supp
 - platformdirs 4.2.2
 - FastAPI 0.109.0 (for web interface)
 - uvicorn 0.27.0 (for web interface)
+- tzdata>=2024.1 (for Eastern Time zone support)
 - **ffmpeg** (optional, for video thumbnail extraction): Install from [ffmpeg.org](https://ffmpeg.org/download.html) or via package manager
 - **VLC Media Player** (optional, for opening files from history): Install from [videolan.org](https://www.videolan.org/) or via package manager
 
@@ -64,7 +65,56 @@ Both interfaces share the same robust download engine with multi-connection supp
 
 ## Quick Start
 
-### Option 1: Web Interface (Recommended)
+### Option 1: Windows Installer (Easiest - Windows 11 Pro)
+
+**For Windows users**, use the pre-built installer for the quickest setup:
+
+1. **Download** `MotherlessDownloaderSetup.exe` from the releases page
+
+2. **Run the installer**:
+   - Double-click `MotherlessDownloaderSetup.exe`
+   - Grant administrator permissions when prompted (required for Program Files installation)
+   - Follow the installation prompts
+
+3. **Launch the application**:
+   - Use the desktop shortcut created during installation
+   - Or run from: `C:\Program Files\Motherless Downloader\MotherlessDownloader.exe`
+
+4. The application will automatically:
+   - Start a local web server on port 8000
+   - Open your default browser to the web interface
+   - Display a console window showing server logs
+
+**Building the Installer Yourself:**
+
+If you want to build the installer from source:
+
+```bash
+# 1. Ensure frontend is built
+cd frontend
+npm install
+npm run build
+cd ..
+
+# 2. Install PyInstaller
+pip install pyinstaller pywin32
+
+# 3. Build the installer
+python build_installer.py
+# Or on Windows: build_installer.bat
+
+# 4. The installer will be created at: dist/MotherlessDownloaderSetup.exe
+```
+
+The installer includes:
+- Complete web interface (frontend + backend)
+- All dependencies bundled (no Python installation required on target machine)
+- Application icon and desktop shortcut
+- Configuration files (`ml.yaml`) pre-configured
+
+### Option 2: Web Interface (From Source)
+
+### Option 2: Web Interface (From Source)
 
 1. **Clone and install Python dependencies:**
    ```bash
@@ -90,7 +140,9 @@ Both interfaces share the same robust download engine with multi-connection supp
 
 4. **Open browser:** Navigate to `http://localhost:8000`
 
-### Option 2: Development Mode (Frontend + Backend)
+### Option 3: Development Mode (Frontend + Backend)
+
+### Option 3: Development Mode (Frontend + Backend)
 
 1. **Terminal 1 - Start backend:**
    ```bash
@@ -105,7 +157,7 @@ Both interfaces share the same robust download engine with multi-connection supp
 
 3. **Open browser:** Navigate to `http://localhost:5173`
 
-### Option 3: Legacy Desktop GUI
+### Option 4: Legacy Desktop GUI
 
 1. **Install and run:**
    ```bash
@@ -149,6 +201,7 @@ Both interfaces share the same robust download engine with multi-connection supp
 - **State Management**: Creates sidecar `.state` files to track download progress and enable resume functionality
 - **Adaptive Connections**: Monitors per-connection throughput and adjusts connection count to optimize total download speed
 - **Thumbnail Extraction**: After video downloads complete, automatically extracts a thumbnail frame using ffmpeg (if available)
+- **Thumbnail Cache**: Thumbnails are stored in a `.thumbnails` cache directory inside the download directory for better organization
 - **VLC Integration**: Double-click thumbnails in history view to open files directly in VLC media player
 - **History Tracking**: All downloads are automatically tracked in SQLite database with full metadata including URL filename, actual filename, save location, and file existence status
 
@@ -282,9 +335,10 @@ The script will:
 - **WebSocket Connection Failed**: Ensure backend is running and accessible
 - **CORS Errors**: Check that frontend proxy is configured correctly in `vite.config.ts`
 - **Build Errors**: Run `npm install` again, ensure Node.js 18+ is installed
-- **Thumbnails Not Showing**: Ensure ffmpeg is installed and accessible in PATH; check server logs for extraction errors
+- **Thumbnails Not Showing**: Ensure ffmpeg is installed and accessible in PATH; check server logs for extraction errors. Thumbnails are stored in `.thumbnails` directory inside your download folder.
 - **File Existence Shows Missing**: Files may have been moved or deleted; redownload button available to re-download
 - **VLC Not Opening Files**: Ensure VLC media player is installed. The application searches common installation paths and PATH. If VLC is installed in a non-standard location, add it to your system PATH.
+- **Timezone Issues**: All timestamps are stored in Eastern Time (EST/EDT). Install `tzdata` package (`pip install tzdata`) for proper daylight saving time handling. The application will fall back to manual offset calculation if `tzdata` is unavailable.
 
 ### Legacy GUI
 - **PySide6 Issues**: If PySide6 fails on Python 3.13, use Python 3.12 instead
